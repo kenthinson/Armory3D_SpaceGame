@@ -1,0 +1,66 @@
+#version 100
+precision mediump float;
+precision highp int;
+
+uniform highp sampler2D gbuffer0;
+uniform highp vec2 dirInv;
+uniform highp sampler2D tex;
+
+varying highp vec2 texCoord;
+
+highp vec2 octahedronWrap(highp vec2 v)
+{
+    return (vec2(1.0) - abs(v.yx)) * vec2((v.x >= 0.0) ? 1.0 : (-1.0), (v.y >= 0.0) ? 1.0 : (-1.0));
+}
+
+highp vec3 getNor(highp vec2 enc)
+{
+    highp vec3 n;
+    n.z = (1.0 - abs(enc.x)) - abs(enc.y);
+    highp vec2 _61;
+    if (n.z >= 0.0)
+    {
+        _61 = enc;
+    }
+    else
+    {
+        _61 = octahedronWrap(enc);
+    }
+    n = vec3(_61.x, _61.y, n.z);
+    n = normalize(n);
+    return n;
+}
+
+highp float doBlur(highp float blurWeight, int pos, highp vec3 nor, highp vec2 texCoord_1)
+{
+    highp float posadd = float(pos) + 0.5;
+    highp vec3 nor2 = getNor(texture2D(gbuffer0, texCoord_1 + (dirInv * float(pos))).xy);
+    highp float influenceFactor = step(0.949999988079071044921875, dot(nor2, nor));
+    highp float col = texture2D(tex, texCoord_1 + (dirInv * posadd)).x;
+    gl_FragData[0].x += ((col * blurWeight) * influenceFactor);
+    highp float weight = blurWeight * influenceFactor;
+    nor2 = getNor(texture2D(gbuffer0, texCoord_1 - (dirInv * float(pos))).xy);
+    influenceFactor = step(0.949999988079071044921875, dot(nor2, nor));
+    col = texture2D(tex, texCoord_1 - (dirInv * posadd)).x;
+    gl_FragData[0].x += ((col * blurWeight) * influenceFactor);
+    weight += (blurWeight * influenceFactor);
+    return weight;
+}
+
+void main()
+{
+    highp vec2 tc = texCoord * 1.0;
+    highp vec3 nor = getNor(texture2D(gbuffer0, texCoord).xy);
+    gl_FragData[0].x = texture2D(tex, tc).x * 0.227026998996734619140625;
+    highp float weight = 0.227026998996734619140625;
+    highp float _178 = doBlur(0.19459460675716400146484375, 1, nor, tc);
+    weight += _178;
+    highp float _185 = doBlur(0.121621601283550262451171875, 2, nor, tc);
+    weight += _185;
+    highp float _192 = doBlur(0.054053999483585357666015625, 3, nor, tc);
+    weight += _192;
+    highp float _199 = doBlur(0.01621600054204463958740234375, 4, nor, tc);
+    weight += _199;
+    gl_FragData[0] = vec4(gl_FragData[0].x / weight);
+}
+

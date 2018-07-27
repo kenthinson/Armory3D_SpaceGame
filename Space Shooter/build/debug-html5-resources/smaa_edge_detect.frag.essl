@@ -1,0 +1,53 @@
+#version 100
+precision mediump float;
+precision highp int;
+
+uniform highp sampler2D colorTex;
+
+varying highp vec4 offset0;
+varying highp vec4 offset1;
+varying highp vec4 offset2;
+varying highp vec2 texCoord;
+
+highp vec2 SMAAColorEdgeDetectionPS(highp vec2 texcoord)
+{
+    highp vec2 threshold = vec2(0.100000001490116119384765625);
+    highp vec3 C = texture2D(colorTex, texcoord).xyz;
+    highp vec3 Cleft = texture2D(colorTex, offset0.xy).xyz;
+    highp vec3 t = abs(C - Cleft);
+    highp vec4 delta;
+    delta.x = max(max(t.x, t.y), t.z);
+    highp vec3 Ctop = texture2D(colorTex, offset0.zw).xyz;
+    t = abs(C - Ctop);
+    delta.y = max(max(t.x, t.y), t.z);
+    highp vec2 edges = step(threshold, delta.xy);
+    if (dot(edges, vec2(1.0)) == 0.0)
+    {
+        discard;
+    }
+    highp vec3 Cright = texture2D(colorTex, offset1.xy).xyz;
+    t = abs(C - Cright);
+    delta.z = max(max(t.x, t.y), t.z);
+    highp vec3 Cbottom = texture2D(colorTex, offset1.zw).xyz;
+    t = abs(C - Cbottom);
+    delta.w = max(max(t.x, t.y), t.z);
+    highp vec2 maxDelta = max(delta.xy, delta.zw);
+    highp vec3 Cleftleft = texture2D(colorTex, offset2.xy).xyz;
+    t = abs(C - Cleftleft);
+    delta.z = max(max(t.x, t.y), t.z);
+    highp vec3 Ctoptop = texture2D(colorTex, offset2.zw).xyz;
+    t = abs(C - Ctoptop);
+    delta.w = max(max(t.x, t.y), t.z);
+    maxDelta = max(maxDelta, delta.zw);
+    highp float finalDelta = max(maxDelta.x, maxDelta.y);
+    edges *= step(vec2(finalDelta), delta.xy * 2.0);
+    return edges;
+}
+
+void main()
+{
+    highp vec2 param = texCoord;
+    highp vec2 _204 = SMAAColorEdgeDetectionPS(param);
+    gl_FragData[0] = vec4(_204.x, _204.y, gl_FragData[0].z, gl_FragData[0].w);
+}
+

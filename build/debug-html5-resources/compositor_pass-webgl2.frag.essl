@@ -1,0 +1,25 @@
+#version 300 es
+precision mediump float;
+precision highp int;
+
+uniform highp sampler2D tex;
+uniform highp sampler2D gbufferD;
+
+in highp vec2 texCoord;
+out highp vec4 fragColor;
+
+highp vec3 tonemapFilmic(highp vec3 color)
+{
+    highp vec3 x = max(vec3(0.0), color - vec3(0.0040000001899898052215576171875));
+    return (x * ((x * 6.19999980926513671875) + vec3(0.5))) / ((x * ((x * 6.19999980926513671875) + vec3(1.7000000476837158203125))) + vec3(0.0599999986588954925537109375));
+}
+
+void main()
+{
+    highp vec2 texCo = texCoord;
+    highp vec3 _57 = texture(tex, texCo).xyz;
+    fragColor = vec4(_57.x, _57.y, _57.z, fragColor.w);
+    highp vec3 _62 = tonemapFilmic(fragColor.xyz);
+    fragColor = vec4(_62.x, _62.y, _62.z, fragColor.w);
+}
+

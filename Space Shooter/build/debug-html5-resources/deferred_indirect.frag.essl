@@ -1,0 +1,81 @@
+#version 100
+precision mediump float;
+precision highp int;
+
+uniform highp vec4 shirr[7];
+uniform highp sampler2D gbuffer0;
+uniform highp sampler2D gbuffer1;
+uniform highp vec3 backgroundCol;
+uniform highp float envmapStrength;
+uniform highp sampler2D ssaotex;
+
+varying highp vec2 texCoord;
+
+highp vec2 octahedronWrap(highp vec2 v)
+{
+    return (vec2(1.0) - abs(v.yx)) * vec2((v.x >= 0.0) ? 1.0 : (-1.0), (v.y >= 0.0) ? 1.0 : (-1.0));
+}
+
+highp vec2 unpackFloat(highp float f)
+{
+    return vec2(floor(f) / 100.0, fract(f));
+}
+
+highp vec2 unpackFloat2(highp float f)
+{
+    return vec2(floor(f) / 255.0, fract(f));
+}
+
+highp vec3 surfaceAlbedo(highp vec3 baseColor, highp float metalness)
+{
+    return mix(baseColor, vec3(0.0), vec3(metalness));
+}
+
+highp vec3 shIrradiance(highp vec3 nor)
+{
+    highp vec3 cl00 = vec3(shirr[0].x, shirr[0].y, shirr[0].z);
+    highp vec3 cl1m1 = vec3(shirr[0].w, shirr[1].x, shirr[1].y);
+    highp vec3 cl10 = vec3(shirr[1].z, shirr[1].w, shirr[2].x);
+    highp vec3 cl11 = vec3(shirr[2].y, shirr[2].z, shirr[2].w);
+    highp vec3 cl2m2 = vec3(shirr[3].x, shirr[3].y, shirr[3].z);
+    highp vec3 cl2m1 = vec3(shirr[3].w, shirr[4].x, shirr[4].y);
+    highp vec3 cl20 = vec3(shirr[4].z, shirr[4].w, shirr[5].x);
+    highp vec3 cl21 = vec3(shirr[5].y, shirr[5].z, shirr[5].w);
+    highp vec3 cl22 = vec3(shirr[6].x, shirr[6].y, shirr[6].z);
+    return ((((((((((cl22 * 0.429042994976043701171875) * ((nor.y * nor.y) - ((-nor.z) * (-nor.z)))) + (((cl20 * 0.743125021457672119140625) * nor.x) * nor.x)) + (cl00 * 0.88622701168060302734375)) - (cl20 * 0.2477079927921295166015625)) + (((cl2m2 * 0.85808598995208740234375) * nor.y) * (-nor.z))) + (((cl21 * 0.85808598995208740234375) * nor.y) * nor.x)) + (((cl2m1 * 0.85808598995208740234375) * (-nor.z)) * nor.x)) + ((cl11 * 1.02332794666290283203125) * nor.y)) + ((cl1m1 * 1.02332794666290283203125) * (-nor.z))) + ((cl10 * 1.02332794666290283203125) * nor.x);
+}
+
+highp vec3 surfaceF0(highp vec3 baseColor, highp float metalness)
+{
+    return mix(vec3(0.039999999105930328369140625), baseColor, vec3(metalness));
+}
+
+void main()
+{
+    highp vec4 g0 = texture2D(gbuffer0, texCoord);
+    highp vec3 n;
+    n.z = (1.0 - abs(g0.x)) - abs(g0.y);
+    highp vec2 _266;
+    if (n.z >= 0.0)
+    {
+        _266 = g0.xy;
+    }
+    else
+    {
+        _266 = octahedronWrap(g0.xy);
+    }
+    n = vec3(_266.x, _266.y, n.z);
+    n = normalize(n);
+    highp vec2 metrough = unpackFloat(g0.z);
+    highp vec4 g1 = texture2D(gbuffer1, texCoord);
+    highp vec2 occspec = unpackFloat2(g1.w);
+    highp vec3 albedo = surfaceAlbedo(g1.xyz, metrough.x);
+    highp vec3 envl = shIrradiance(n);
+    envl *= albedo;
+    envl += (backgroundCol * surfaceF0(g1.xyz, metrough.x));
+    envl *= (envmapStrength * occspec.x);
+    gl_FragData[0] = vec4(envl.x, envl.y, envl.z, gl_FragData[0].w);
+    highp vec3 _335 = gl_FragData[0].xyz * texture2D(ssaotex, texCoord).x;
+    gl_FragData[0] = vec4(_335.x, _335.y, _335.z, gl_FragData[0].w);
+}
+

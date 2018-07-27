@@ -1,0 +1,13 @@
+#version 100
+
+uniform mat4 LVWVP;
+
+varying vec4 wvpposition;
+attribute vec3 pos;
+
+void main()
+{
+    wvpposition = LVWVP * vec4(pos, 1.0);
+    gl_Position = wvpposition;
+}
+

@@ -1,0 +1,69 @@
+#version 300 es
+precision mediump float;
+precision highp int;
+
+uniform highp sampler2D blendTex;
+uniform highp sampler2D colorTex;
+uniform highp vec2 screenSizeInv;
+
+out highp vec4 fragColor;
+in highp vec2 texCoord;
+in highp vec4 offset;
+
+highp vec4 SMAANeighborhoodBlendingPS(highp vec2 texcoord, highp vec4 offset_1)
+{
+    highp vec4 a;
+    a.x = texture(blendTex, offset_1.xy).w;
+    a.y = texture(blendTex, offset_1.zw).y;
+    highp vec2 _41 = texture(blendTex, texcoord).xz;
+    a = vec4(a.x, a.y, _41.y, _41.x);
+    if (dot(a, vec4(1.0)) < 9.9999997473787516355514526367188e-06)
+    {
+        highp vec4 color = textureLod(colorTex, texcoord, 0.0);
+        return color;
+    }
+    else
+    {
+        bool h = max(a.x, a.z) > max(a.y, a.w);
+        highp vec4 blendingOffset = vec4(0.0, a.y, 0.0, a.w);
+        highp vec2 blendingWeight = a.yw;
+        if (h)
+        {
+            blendingOffset.x = a.x;
+        }
+        if (h)
+        {
+            blendingOffset.y = 0.0;
+        }
+        if (h)
+        {
+            blendingOffset.z = a.z;
+        }
+        if (h)
+        {
+            blendingOffset.w = 0.0;
+        }
+        if (h)
+        {
+            blendingWeight.x = a.x;
+        }
+        if (h)
+        {
+            blendingWeight.y = a.z;
+        }
+        blendingWeight /= vec2(dot(blendingWeight, vec2(1.0)));
+        highp vec4 blendingCoord = (blendingOffset * vec4(screenSizeInv, -screenSizeInv)) + texcoord.xyxy;
+        highp vec4 color_1 = textureLod(colorTex, blendingCoord.xy, 0.0) * blendingWeight.x;
+        color_1 += (textureLod(colorTex, blendingCoord.zw, 0.0) * blendingWeight.y);
+        return color_1;
+    }
+    return vec4(0.0);
+}
+
+void main()
+{
+    highp vec2 param = texCoord;
+    highp vec4 param_1 = offset;
+    fragColor = SMAANeighborhoodBlendingPS(param, param_1);
+}
+

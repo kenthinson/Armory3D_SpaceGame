@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="HaxeProjectSettings" defines="/Users/kent/Applications/Armory/blender.app//armsdk//armory,/Users/kent/Applications/Armory/blender.app//armsdk//iron,arm_deferred,arm_csm,rp_hdr,rp_renderer=Deferred,rp_depthprepass,rp_shadowmap,rp_shadowmap_size=1024,rp_background=World,rp_render_to_texture,rp_compositornodes,rp_antialiasing=SMAA,rp_supersampling=1,rp_gi=Off,rp_ssgi=SSAO,arm_shaderload,arm_soundcompress,arm_fast,js-classic,sys_krom,sys_g1,sys_g2,sys_g3,sys_g4,sys_a1,sys_a2,kha_js,kha_krom,kha_krom_js,kha_opengl,kha_g1,kha_g2,kha_g3,kha_g4,kha_a1,kha_a2,kha,kha_version=1611--macro include('armory.trait'),--macro include('armory.trait.internal'),-debug," />
+</project>

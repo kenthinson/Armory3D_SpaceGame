@@ -1,0 +1,19 @@
+#version 100
+
+uniform vec2 screenSizeInv;
+
+varying vec2 texCoord;
+attribute vec2 pos;
+varying vec4 offset0;
+varying vec4 offset1;
+varying vec4 offset2;
+
+void main()
+{
+    texCoord = (pos * vec2(0.5)) + vec2(0.5);
+    offset0 = (screenSizeInv.xyxy * vec4(-1.0, 0.0, 0.0, -1.0)) + texCoord.xyxy;
+    offset1 = (screenSizeInv.xyxy * vec4(1.0, 0.0, 0.0, 1.0)) + texCoord.xyxy;
+    offset2 = (screenSizeInv.xyxy * vec4(-2.0, 0.0, 0.0, -2.0)) + texCoord.xyxy;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+
