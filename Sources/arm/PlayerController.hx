@@ -3,6 +3,7 @@ import iron.system.Input;
 import iron.system.Time;
 
 class PlayerController extends iron.Trait {
+	private var timeSinceLastFire = 0.0;
 	public function new() {
 		super();
 
@@ -44,9 +45,17 @@ class PlayerController extends iron.Trait {
 
 			//Fire bullets
 			if(Input.getKeyboard().down("space")){
-				iron.Scene.active.spawnObject("Bullet",null,function(bullet:iron.object.Object){
-				bullet.transform.loc.set(object.transform.loc.x,object.transform.loc.y,object.transform.loc.z);
-			});
+				if(timeSinceLastFire >= 0.2){
+					iron.Scene.active.spawnObject("Bullet",null,function(bullet:iron.object.Object){
+						bullet.transform.loc.set(object.transform.loc.x,object.transform.loc.y,object.transform.loc.z);
+					});
+					timeSinceLastFire = 0.0;
+				}
+				timeSinceLastFire += Time.delta;
+			}
+
+			if(Input.getKeyboard().started("space")){
+				timeSinceLastFire = 10;
 			}
 		});
 
