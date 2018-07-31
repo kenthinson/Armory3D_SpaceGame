@@ -4,6 +4,8 @@ let project = new Project('SpaceShooterblend');
 project.addSources('Sources');
 project.addLibrary("/Users/kent/Applications/Armory/blender.app/armsdk/armory");
 project.addLibrary("/Users/kent/Applications/Armory/blender.app/armsdk/iron");
+project.addParameter('arm.BulletController');
+project.addParameter("--macro keep('arm.BulletController')");
 project.addParameter('arm.PlayerController');
 project.addParameter("--macro keep('arm.PlayerController')");
 project.addShaders('/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Shaders/blur_edge_pass.frag.glsl');
@@ -29,7 +31,11 @@ project.addShaders('build_SpaceShooterblend/compiled/Shaders/Material_003_mesh.f
 project.addShaders('build_SpaceShooterblend/compiled/Shaders/Material_003_mesh.vert.glsl');
 project.addShaders('build_SpaceShooterblend/compiled/Shaders/Material_003_shadowmap.frag.glsl');
 project.addShaders('build_SpaceShooterblend/compiled/Shaders/Material_003_shadowmap.vert.glsl');
+project.addShaders('build_SpaceShooterblend/compiled/Shaders/armdefault_mesh.frag.glsl');
+project.addShaders('build_SpaceShooterblend/compiled/Shaders/armdefault_mesh.vert.glsl');
+project.addShaders('build_SpaceShooterblend/compiled/Shaders/armdefault_shadowmap.vert.glsl');
 project.addAssets("build_SpaceShooterblend/compiled/Shaders/Material_003_data.arm", { notinlist: true });
+project.addAssets("build_SpaceShooterblend/compiled/Shaders/armdefault_data.arm", { notinlist: true });
 project.addAssets("build_SpaceShooterblend/compiled/Shaders/shader_datas.arm", { notinlist: true });
 project.addAssets("/Users/kent/Applications/Armory/blender.app/armsdk/armory/Assets/brdf.png", { notinlist: true });
 project.addAssets("/Users/kent/Applications/Armory/blender.app/armsdk/armory/Assets/noise8.png", { notinlist: true });
@@ -37,6 +43,7 @@ project.addAssets("/Users/kent/Applications/Armory/blender.app/armsdk/armory/Ass
 project.addAssets("/Users/kent/Applications/Armory/blender.app/armsdk/armory/Assets/smaa_search.png", { notinlist: true });
 project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/Scene.arm", { notinlist: true });
 project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/meshes/mesh_Cube.006.arm", { notinlist: true });
+project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/meshes/mesh_Cylinder.002.arm", { notinlist: true });
 project.addAssets("build_SpaceShooterblend/compiled/Assets/envmaps/World_irradiance.arm", { notinlist: true });
 project.addDefine('arm_deferred');
 project.addDefine('arm_csm');

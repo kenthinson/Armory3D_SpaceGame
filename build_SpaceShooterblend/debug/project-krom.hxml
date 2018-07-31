@@ -46,6 +46,8 @@
 -D kha
 -D kha_version=1611
 -js krom/krom.js.temp
+arm.BulletController
+--macro keep('arm.BulletController')
 arm.PlayerController
 --macro keep('arm.PlayerController')
 -debug
