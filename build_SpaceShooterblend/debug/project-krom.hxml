@@ -3,10 +3,13 @@
 -cp /Users/kent/Desktop/Space Shooter/Sources
 -cp /Users/kent/Applications/Armory/blender.app/armsdk/armory/Sources
 -cp /Users/kent/Applications/Armory/blender.app/armsdk/iron/Sources
+-cp /Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet/Sources
 -cp /Users/kent/Applications/Armory/blender.app/armsdk/armory
 -cp /Users/kent/Applications/Armory/blender.app/armsdk/iron
+-cp /Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet
 -D /Users/kent/Applications/Armory/blender.app/armsdk/armory
 -D /Users/kent/Applications/Armory/blender.app/armsdk/iron
+-D /Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet
 -D arm_deferred
 -D arm_csm
 -D rp_hdr
@@ -21,6 +24,8 @@
 -D rp_supersampling=1
 -D rp_gi=Off
 -D rp_ssgi=SSAO
+-D arm_physics
+-D arm_bullet
 -D arm_shaderload
 -D arm_soundcompress
 -D arm_skin
@@ -46,6 +51,12 @@
 -D kha
 -D kha_version=1611
 -js krom/krom.js.temp
+arm.EnemyController
+--macro keep('arm.EnemyController')
+armory.trait.physics.bullet.RigidBody
+--macro keep('armory.trait.physics.bullet.RigidBody')
+armory.trait.physics.bullet.PhysicsWorld
+--macro keep('armory.trait.physics.bullet.PhysicsWorld')
 arm.BulletController
 --macro keep('arm.BulletController')
 arm.PlayerController

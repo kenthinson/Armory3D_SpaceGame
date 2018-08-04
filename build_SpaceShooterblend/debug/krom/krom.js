@@ -157,6 +157,8 @@ Main.main = function() {
 	iron_object_LampObject.cascadeCount = 4;
 	iron_object_LampObject.cascadeSplitFactor = 0.800000011920929;
 	Main.state = 1;
+	Main.state++;
+	Main.loadLibAmmo("ammo.js");
 	Main.state--;
 	Main.start();
 };
@@ -469,19 +471,54 @@ var arm_BulletController = $hxClasses["arm.BulletController"] = function() {
 	this.totalAliveTime = 0.0;
 	var _gthis = this;
 	iron_Trait.call(this);
+	this.notifyOnInit(function() {
+		_gthis.physics = armory_trait_physics_bullet_PhysicsWorld.active;
+	});
 	this.notifyOnUpdate(function() {
+		_gthis.totalAliveTime += 0.0166666666666666664 * iron_system_Time.scale;
 		_gthis.object.transform.translate(0,10 * (0.0166666666666666664 * iron_system_Time.scale),0);
+		var rigidBodies = _gthis.physics.getContacts(_gthis.object.getTrait(armory_trait_physics_bullet_RigidBody));
+		if(rigidBodies != null) {
+			var _g = 0;
+			while(_g < rigidBodies.length) {
+				var rigidBody = rigidBodies[_g];
+				++_g;
+				if(rigidBody.object.name == "Enemy") {
+					rigidBody.object.getTrait(arm_EnemyController).damage(1);
+					_gthis.object.remove();
+				}
+			}
+		}
 		if(_gthis.totalAliveTime >= 3.0) {
 			_gthis.object.remove();
 		}
-		_gthis.totalAliveTime += 0.0166666666666666664 * iron_system_Time.scale;
 	});
 };
 arm_BulletController.__name__ = true;
 arm_BulletController.__super__ = iron_Trait;
 arm_BulletController.prototype = $extend(iron_Trait.prototype,{
 	totalAliveTime: null
+	,physics: null
 	,__class__: arm_BulletController
+});
+var arm_EnemyController = $hxClasses["arm.EnemyController"] = function() {
+	this.health = 10;
+	var _gthis = this;
+	iron_Trait.call(this);
+	this.notifyOnUpdate(function() {
+		if(_gthis.health <= 0) {
+			_gthis.object.remove();
+		}
+	});
+};
+arm_EnemyController.__name__ = true;
+arm_EnemyController.__super__ = iron_Trait;
+arm_EnemyController.prototype = $extend(iron_Trait.prototype,{
+	health: null
+	,damage: function(amount) {
+		this.health -= amount;
+	}
+	,__class__: arm_EnemyController
 });
 var arm_PlayerController = $hxClasses["arm.PlayerController"] = function() {
 	this.timeSinceLastFire = 0.0;
@@ -841,6 +878,853 @@ armory_renderpath_RenderPathCreator.get = function() {
 	armory_renderpath_RenderPathCreator.path.commands = armory_renderpath_RenderPathDeferred.commands;
 	return armory_renderpath_RenderPathCreator.path;
 };
+var armory_trait_physics_bullet_KinematicCharacterController = $hxClasses["armory.trait.physics.bullet.KinematicCharacterController"] = function(mass,shape,jumpSpeed,friction,restitution,collisionMargin,animated,group) {
+	if(group == null) {
+		group = 1;
+	}
+	if(animated == null) {
+		animated = false;
+	}
+	if(collisionMargin == null) {
+		collisionMargin = 0.0;
+	}
+	if(restitution == null) {
+		restitution = 0.0;
+	}
+	if(friction == null) {
+		friction = 0.5;
+	}
+	if(jumpSpeed == null) {
+		jumpSpeed = 8.0;
+	}
+	if(shape == null) {
+		shape = 5;
+	}
+	if(mass == null) {
+		mass = 1.0;
+	}
+	this.onReady = null;
+	this.id = 0;
+	this.ready = false;
+	this.character = null;
+	this.body = null;
+	this.group = 1;
+	this.transform = null;
+	this.isConvexHull = false;
+	iron_Trait.call(this);
+	this.mass = mass;
+	this.jumpSpeed = jumpSpeed;
+	this.shape = shape;
+	this.friction = friction;
+	this.restitution = restitution;
+	this.collisionMargin = collisionMargin;
+	this.animated = animated;
+	this.group = group;
+	this.notifyOnAdd($bind(this,this.init));
+	this.notifyOnLateUpdate($bind(this,this.lateUpdate));
+	this.notifyOnRemove($bind(this,this.removeFromWorld));
+};
+armory_trait_physics_bullet_KinematicCharacterController.__name__ = true;
+armory_trait_physics_bullet_KinematicCharacterController.__super__ = iron_Trait;
+armory_trait_physics_bullet_KinematicCharacterController.prototype = $extend(iron_Trait.prototype,{
+	shape: null
+	,_shapeConvex: null
+	,_shapeConvexHull: null
+	,isConvexHull: null
+	,physics: null
+	,transform: null
+	,mass: null
+	,friction: null
+	,restitution: null
+	,collisionMargin: null
+	,animated: null
+	,group: null
+	,bodyScaleX: null
+	,bodyScaleY: null
+	,bodyScaleZ: null
+	,currentScaleX: null
+	,currentScaleY: null
+	,currentScaleZ: null
+	,jumpSpeed: null
+	,body: null
+	,character: null
+	,ready: null
+	,id: null
+	,onReady: null
+	,withMargin: function(f) {
+		return f - f * this.collisionMargin;
+	}
+	,notifyOnReady: function(f) {
+		this.onReady = f;
+		if(this.ready) {
+			this.onReady();
+		}
+	}
+	,init: function() {
+		if(this.ready) {
+			return;
+		}
+		this.ready = true;
+		this.transform = this.object.transform;
+		this.physics = armory_trait_physics_bullet_PhysicsWorld.active;
+		this._shapeConvex = null;
+		this._shapeConvexHull = null;
+		this.isConvexHull = false;
+		if(this.shape == 0) {
+			var f = this.transform.dim.x / 2;
+			var f1 = this.transform.dim.y / 2;
+			var f2 = this.transform.dim.z / 2;
+			this._shapeConvex = new Ammo.btBoxShape(new Ammo.btVector3(f - f * this.collisionMargin,f1 - f1 * this.collisionMargin,f2 - f2 * this.collisionMargin));
+		} else if(this.shape == 1) {
+			var width = this.transform.dim.x;
+			if(this.transform.dim.y > width) {
+				width = this.transform.dim.y;
+			}
+			if(this.transform.dim.z > width) {
+				width = this.transform.dim.z;
+			}
+			var f3 = width / 2;
+			this._shapeConvex = new Ammo.btSphereShape(f3 - f3 * this.collisionMargin);
+		} else if(this.shape == 2 && this.mass > 0) {
+			this._shapeConvexHull = new Ammo.btConvexHullShape();
+			this.isConvexHull = true;
+			this.addPointsToConvexHull(this._shapeConvexHull,this.transform.scale,this.collisionMargin);
+		} else if(this.shape == 3) {
+			var f4 = this.transform.dim.x / 2;
+			var f5 = this.transform.dim.z;
+			this._shapeConvex = new Ammo.btConeShapeZ(f4 - f4 * this.collisionMargin,f5 - f5 * this.collisionMargin);
+		} else if(this.shape == 4) {
+			var f6 = this.transform.dim.x / 2;
+			var f7 = this.transform.dim.y / 2;
+			var f8 = this.transform.dim.z / 2;
+			this._shapeConvex = new Ammo.btCylinderShapeZ(new Ammo.btVector3(f6 - f6 * this.collisionMargin,f7 - f7 * this.collisionMargin,f8 - f8 * this.collisionMargin));
+		} else if(this.shape == 5) {
+			var r = this.transform.dim.x / 2;
+			var f9 = this.transform.dim.z - r * 2;
+			this._shapeConvex = new Ammo.btCapsuleShapeZ(r - r * this.collisionMargin,f9 - f9 * this.collisionMargin);
+		}
+		var _transform = new Ammo.btTransform();
+		_transform.setIdentity();
+		_transform.setOrigin(new Ammo.btVector3(this.transform.world.self._30,this.transform.world.self._31,this.transform.world.self._32));
+		var rot = this.transform.world.getQuat();
+		_transform.setRotation(new Ammo.btQuaternion(rot.x,rot.y,rot.z,rot.w));
+		this.body = new Ammo.btPairCachingGhostObject();
+		this.body.setCollisionShape(this.isConvexHull ? this._shapeConvexHull : this._shapeConvex);
+		this.body.setCollisionFlags(16);
+		this.body.setWorldTransform(_transform);
+		this.body.setFriction(this.friction);
+		this.body.setRollingFriction(this.friction);
+		this.body.setRestitution(this.restitution);
+		this.character = new Ammo.btKinematicCharacterController(this.body,this.isConvexHull ? this._shapeConvexHull : this._shapeConvex,0.5,2);
+		this.character.setJumpSpeed(this.jumpSpeed);
+		this.character.setUseGhostSweepTest(true);
+		this.setActivationState(4);
+		this.bodyScaleX = this.currentScaleX = this.transform.scale.x;
+		this.bodyScaleY = this.currentScaleY = this.transform.scale.y;
+		this.bodyScaleZ = this.currentScaleZ = this.transform.scale.z;
+		this.id = armory_trait_physics_bullet_KinematicCharacterController.nextId;
+		armory_trait_physics_bullet_KinematicCharacterController.nextId++;
+		this.body.userIndex = this.id;
+		this.physics.addKinematicCharacterController(this);
+		if(this.onReady != null) {
+			this.onReady();
+		}
+	}
+	,lateUpdate: function() {
+		if(!this.ready) {
+			return;
+		}
+		if(this.object.animation != null || this.animated) {
+			this.syncTransform();
+		} else {
+			var trans = this.body.getWorldTransform();
+			var p = trans.getOrigin();
+			var q = trans.getRotation();
+			this.transform.loc.set(p.x(),p.y(),p.z());
+			var _this = this.transform.rot;
+			var x = q.x();
+			var y = q.y();
+			var z = q.z();
+			var w = q.w();
+			_this.x = x;
+			_this.y = y;
+			_this.z = z;
+			_this.w = w;
+			if(this.object.parent != null) {
+				var ptransform = this.object.parent.transform;
+				this.transform.loc.x -= ptransform.world.self._30;
+				this.transform.loc.y -= ptransform.world.self._31;
+				this.transform.loc.z -= ptransform.world.self._32;
+			}
+			this.transform.buildMatrix();
+		}
+	}
+	,canJump: function() {
+		return this.character.canJump();
+	}
+	,onGround: function() {
+		return this.character.onGround();
+	}
+	,setJumpSpeed: function(jumpSpeed) {
+		this.character.setJumpSpeed(jumpSpeed);
+	}
+	,setFallSpeed: function(fallSpeed) {
+		this.character.setFallSpeed(fallSpeed);
+	}
+	,setMaxSlope: function(slopeRadians) {
+		this.character.setMaxSlope(slopeRadians);
+		return;
+	}
+	,getMaxSlope: function() {
+		return this.character.getMaxSlope();
+	}
+	,setMaxJumpHeight: function(maxJumpHeight) {
+		this.character.setMaxJumpHeight(maxJumpHeight);
+	}
+	,setWalkDirection: function(walkDirection) {
+		this.character.setWalkDirection(new Ammo.btVector3(walkDirection.x,walkDirection.y,walkDirection.z));
+	}
+	,setUpInterpolate: function(value) {
+		this.character.setUpInterpolate(value);
+	}
+	,jump: function() {
+		this.character.jump();
+	}
+	,removeFromWorld: function() {
+		if(this.physics != null) {
+			this.physics.removeKinematicCharacterController(this);
+		}
+	}
+	,activate: function() {
+		this.body.activate(false);
+	}
+	,disableGravity: function() {
+		this.character.setGravity(0.0);
+	}
+	,enableGravity: function() {
+		this.character.setGravity(Math.abs(this.physics.world.getGravity().z()) * 3.0);
+	}
+	,setGravity: function(f) {
+		this.character.setGravity(f);
+	}
+	,setActivationState: function(newState) {
+		this.body.setActivationState(newState);
+	}
+	,setFriction: function(f) {
+		this.body.setFriction(f);
+		this.body.setRollingFriction(f);
+		this.friction = f;
+	}
+	,syncTransform: function() {
+		var t = this.transform;
+		t.buildMatrix();
+		var trans = new Ammo.btTransform();
+		trans.setOrigin(new Ammo.btVector3(t.world.self._30,t.world.self._31,t.world.self._32));
+		var rot = t.world.getQuat();
+		trans.setRotation(new Ammo.btQuaternion(rot.x,rot.y,rot.z,rot.w));
+		if(this.currentScaleX != t.scale.x || this.currentScaleY != t.scale.y || this.currentScaleZ != t.scale.z) {
+			this.setScale(t.scale);
+		}
+		this.activate();
+	}
+	,setScale: function(v) {
+		this.currentScaleX = v.x;
+		this.currentScaleY = v.y;
+		this.currentScaleZ = v.z;
+		if(this.isConvexHull) {
+			this._shapeConvexHull.setLocalScaling(new Ammo.btVector3(this.bodyScaleX * v.x,this.bodyScaleY * v.y,this.bodyScaleZ * v.z));
+		} else {
+			this._shapeConvex.setLocalScaling(new Ammo.btVector3(this.bodyScaleX * v.x,this.bodyScaleY * v.y,this.bodyScaleZ * v.z));
+		}
+		this.physics.world.updateSingleAabb(this.body);
+	}
+	,addPointsToConvexHull: function(shape,scale,margin) {
+		var positions = (js_Boot.__cast(this.object , iron_object_MeshObject)).data.geom.positions;
+		var sx = scale.x * (1.0 - margin);
+		var sy = scale.y * (1.0 - margin);
+		var sz = scale.z * (1.0 - margin);
+		var _g1 = 0;
+		var _g = positions.length / 3 | 0;
+		while(_g1 < _g) {
+			var i = _g1++;
+			shape.addPoint(new Ammo.btVector3(positions[i * 3] * sx,positions[i * 3 + 1] * sy,positions[i * 3 + 2] * sz),true);
+		}
+	}
+	,__class__: armory_trait_physics_bullet_KinematicCharacterController
+});
+var armory_trait_physics_bullet_ContactPair = $hxClasses["armory.trait.physics.bullet.ContactPair"] = function(a,b) {
+	this.a = a;
+	this.b = b;
+};
+armory_trait_physics_bullet_ContactPair.__name__ = true;
+armory_trait_physics_bullet_ContactPair.prototype = {
+	a: null
+	,b: null
+	,posA: null
+	,posB: null
+	,nor: null
+	,impulse: null
+	,__class__: armory_trait_physics_bullet_ContactPair
+};
+var armory_trait_physics_bullet_PhysicsWorld = $hxClasses["armory.trait.physics.bullet.PhysicsWorld"] = function(timeScale,timeStep) {
+	if(timeStep == null) {
+		timeStep = 0.0166666666666666664;
+	}
+	if(timeScale == null) {
+		timeScale = 1.0;
+	}
+	this.pairCache = false;
+	this.hitPointWorld = new iron_math_Vec4();
+	this.maxSteps = 1;
+	this.timeStep = 0.0166666666666666664;
+	this.timeScale = 1.0;
+	this.preUpdates = null;
+	iron_Trait.call(this);
+	if(armory_trait_physics_bullet_PhysicsWorld.active != null && !armory_trait_physics_bullet_PhysicsWorld.sceneRemoved) {
+		return;
+	}
+	armory_trait_physics_bullet_PhysicsWorld.sceneRemoved = false;
+	this.timeScale = timeScale;
+	this.timeStep = timeStep;
+	this.maxSteps = timeStep < 0.0166666666666666664 ? 10 : 1;
+	if(armory_trait_physics_bullet_PhysicsWorld.active == null) {
+		this.createPhysics();
+	} else {
+		var rb = armory_trait_physics_bullet_PhysicsWorld.active.rbMap.iterator();
+		while(rb.hasNext()) {
+			var rb1 = rb.next();
+			this.removeRigidBody(rb1);
+		}
+		this.world = armory_trait_physics_bullet_PhysicsWorld.active.world;
+		this.dispatcher = armory_trait_physics_bullet_PhysicsWorld.active.dispatcher;
+	}
+	this.contacts = [];
+	this.rbMap = new haxe_ds_IntMap();
+	armory_trait_physics_bullet_PhysicsWorld.active = this;
+	this.notifyOnLateUpdate($bind(this,this.lateUpdate));
+	iron_Scene.active.notifyOnRemove($bind(this,this.resetWorld));
+};
+armory_trait_physics_bullet_PhysicsWorld.__name__ = true;
+armory_trait_physics_bullet_PhysicsWorld.__super__ = iron_Trait;
+armory_trait_physics_bullet_PhysicsWorld.prototype = $extend(iron_Trait.prototype,{
+	world: null
+	,dispatcher: null
+	,contacts: null
+	,preUpdates: null
+	,rbMap: null
+	,timeScale: null
+	,timeStep: null
+	,maxSteps: null
+	,hitPointWorld: null
+	,pairCache: null
+	,resetWorld: function() {
+		this.reset();
+		armory_trait_physics_bullet_PhysicsWorld.sceneRemoved = true;
+	}
+	,reset: function() {
+		var rb = armory_trait_physics_bullet_PhysicsWorld.active.rbMap.iterator();
+		while(rb.hasNext()) {
+			var rb1 = rb.next();
+			this.removeRigidBody(rb1);
+		}
+	}
+	,createPhysics: function() {
+		var broadphase = new Ammo.btDbvtBroadphase();
+		var collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+		this.dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+		var solver = new Ammo.btSequentialImpulseConstraintSolver();
+		var g = iron_Scene.active.raw.gravity;
+		var gravity = g == null ? new iron_math_Vec4(0,0,-9.81) : new iron_math_Vec4(g[0],g[1],g[2]);
+		this.world = new Ammo.btDiscreteDynamicsWorld(this.dispatcher,broadphase,solver,collisionConfiguration);
+		this.setGravity(gravity);
+	}
+	,setGravity: function(v) {
+		this.world.setGravity(new Ammo.btVector3(v.x,v.y,v.z));
+	}
+	,addRigidBody: function(body) {
+		this.world.addRigidBody(body.body,body.group,body.group);
+		this.rbMap.h[body.id] = body;
+	}
+	,removeRigidBody: function(body) {
+		if(this.world != null) {
+			this.world.removeRigidBody(body.body);
+		}
+		this.rbMap.remove(body.id);
+	}
+	,addKinematicCharacterController: function(controller) {
+		if(!this.pairCache) {
+			this.world.getPairCache().setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
+			this.pairCache = true;
+		}
+		this.world.addAction(controller.character);
+		this.world.addCollisionObject(controller.body,controller.group,controller.group);
+	}
+	,removeKinematicCharacterController: function(controller) {
+		if(this.world != null) {
+			this.world.removeCollisionObject(controller.body);
+			this.world.removeAction(controller.character);
+		}
+		Ammo.destroy(controller.body);
+	}
+	,getContacts: function(body) {
+		if(this.contacts.length == 0) {
+			return null;
+		}
+		var res = [];
+		var _g1 = 0;
+		var _g = this.contacts.length;
+		while(_g1 < _g) {
+			var i = _g1++;
+			var c = this.contacts[i];
+			if(c.a == body.body.userIndex) {
+				res.push(this.rbMap.h[c.b]);
+			} else if(c.b == body.body.userIndex) {
+				res.push(this.rbMap.h[c.a]);
+			}
+		}
+		return res;
+	}
+	,getContactPairs: function(body) {
+		if(this.contacts.length == 0) {
+			return null;
+		}
+		var res = [];
+		var _g1 = 0;
+		var _g = this.contacts.length;
+		while(_g1 < _g) {
+			var i = _g1++;
+			var c = this.contacts[i];
+			if(c.a == body.body.userIndex) {
+				res.push(c);
+			} else if(c.b == body.body.userIndex) {
+				res.push(c);
+			}
+		}
+		return res;
+	}
+	,lateUpdate: function() {
+		var t = 0.0166666666666666664 * iron_system_Time.scale * this.timeScale;
+		if(t == 0.0) {
+			return;
+		}
+		if(this.preUpdates != null) {
+			var _g = 0;
+			var _g1 = this.preUpdates;
+			while(_g < _g1.length) {
+				var f = _g1[_g];
+				++_g;
+				f();
+			}
+		}
+		this.world.stepSimulation(this.timeStep,this.maxSteps,t);
+		this.updateContacts();
+	}
+	,updateContacts: function() {
+		this.contacts = [];
+		var numManifolds = this.dispatcher.getNumManifolds();
+		var _g1 = 0;
+		var _g = numManifolds;
+		while(_g1 < _g) {
+			var i = _g1++;
+			var contactManifold = this.dispatcher.getManifoldByIndexInternal(i);
+			var obA = contactManifold.getBody0();
+			var obB = contactManifold.getBody1();
+			var bodyA = Ammo.btRigidBody.prototype.upcast(obA);
+			var bodyB = Ammo.btRigidBody.prototype.upcast(obB);
+			var cp = new armory_trait_physics_bullet_ContactPair(bodyA.userIndex,bodyB.userIndex);
+			var numContacts = contactManifold.getNumContacts();
+			var _g3 = 0;
+			var _g2 = numContacts;
+			while(_g3 < _g2) {
+				var j = _g3++;
+				var pt = contactManifold.getContactPoint(j);
+				if(pt.getDistance() < 0) {
+					var posA = pt.get_m_positionWorldOnA();
+					var posB = pt.get_m_positionWorldOnB();
+					var nor = pt.get_m_normalWorldOnB();
+					cp.posA = new iron_math_Vec4(posA.x(),posA.y(),posA.z());
+					cp.posB = new iron_math_Vec4(posB.x(),posB.y(),posB.z());
+					cp.nor = new iron_math_Vec4(nor.x(),nor.y(),nor.z());
+					cp.impulse = pt.getAppliedImpulse();
+					this.contacts.push(cp);
+					break;
+				}
+			}
+		}
+	}
+	,pickClosest: function(inputX,inputY) {
+		var camera = iron_Scene.active.camera;
+		var start = new iron_math_Vec4();
+		var end = new iron_math_Vec4();
+		iron_math_RayCaster.getDirection(start,end,inputX,inputY,camera);
+		var _this = camera.transform.world;
+		return this.rayCast(new iron_math_Vec4(_this.self._30,_this.self._31,_this.self._32,_this.self._33),end);
+	}
+	,rayCast: function(from,to) {
+		var rayFrom = new Ammo.btVector3(from.x,from.y,from.z);
+		var rayTo = new Ammo.btVector3(to.x,to.y,to.z);
+		var rayCallback = new Ammo.ClosestRayResultCallback(rayFrom,rayTo);
+		this.world.rayTest(rayFrom,rayTo,rayCallback);
+		if(rayCallback.hasHit()) {
+			var co = rayCallback.get_m_collisionObject();
+			var body = Ammo.btRigidBody.prototype.upcast(co);
+			var hit = rayCallback.get_m_hitPointWorld();
+			this.hitPointWorld.set(hit.x(),hit.y(),hit.z());
+			return this.rbMap.h[body.userIndex];
+		}
+		return null;
+	}
+	,notifyOnPreUpdate: function(f) {
+		if(this.preUpdates == null) {
+			this.preUpdates = [];
+		}
+		this.preUpdates.push(f);
+	}
+	,removePreUpdate: function(f) {
+		HxOverrides.remove(this.preUpdates,f);
+	}
+	,__class__: armory_trait_physics_bullet_PhysicsWorld
+});
+var armory_trait_physics_bullet_RigidBody = $hxClasses["armory.trait.physics.bullet.RigidBody"] = function(mass,shape,friction,restitution,collisionMargin,linearDamping,angularDamping,animated,linearFactors,angularFactors,group,trigger,deactivationParams) {
+	if(trigger == null) {
+		trigger = false;
+	}
+	if(group == null) {
+		group = 1;
+	}
+	if(animated == null) {
+		animated = false;
+	}
+	if(angularDamping == null) {
+		angularDamping = 0.1;
+	}
+	if(linearDamping == null) {
+		linearDamping = 0.04;
+	}
+	if(collisionMargin == null) {
+		collisionMargin = 0.0;
+	}
+	if(restitution == null) {
+		restitution = 0.0;
+	}
+	if(friction == null) {
+		friction = 0.5;
+	}
+	if(shape == null) {
+		shape = 0;
+	}
+	if(mass == null) {
+		mass = 1.0;
+	}
+	this.onReady = null;
+	this.id = 0;
+	this.ready = false;
+	this.body = null;
+	this.trigger = false;
+	this.group = 1;
+	this.transform = null;
+	this.isConvex = false;
+	iron_Trait.call(this);
+	this.mass = mass;
+	this.shape = shape;
+	this.friction = friction;
+	this.restitution = restitution;
+	this.collisionMargin = collisionMargin;
+	this.linearDamping = linearDamping;
+	this.angularDamping = angularDamping;
+	this.animated = animated;
+	this.linearFactors = linearFactors;
+	this.angularFactors = angularFactors;
+	this.group = group;
+	this.trigger = trigger;
+	this.deactivationParams = deactivationParams;
+	this.notifyOnAdd($bind(this,this.init));
+};
+armory_trait_physics_bullet_RigidBody.__name__ = true;
+armory_trait_physics_bullet_RigidBody.__super__ = iron_Trait;
+armory_trait_physics_bullet_RigidBody.prototype = $extend(iron_Trait.prototype,{
+	shape: null
+	,_motionState: null
+	,_shape: null
+	,_shapeConvex: null
+	,isConvex: null
+	,physics: null
+	,transform: null
+	,mass: null
+	,friction: null
+	,restitution: null
+	,collisionMargin: null
+	,linearDamping: null
+	,angularDamping: null
+	,animated: null
+	,linearFactors: null
+	,angularFactors: null
+	,deactivationParams: null
+	,group: null
+	,trigger: null
+	,bodyScaleX: null
+	,bodyScaleY: null
+	,bodyScaleZ: null
+	,currentScaleX: null
+	,currentScaleY: null
+	,currentScaleZ: null
+	,body: null
+	,ready: null
+	,id: null
+	,onReady: null
+	,withMargin: function(f) {
+		return f - f * this.collisionMargin;
+	}
+	,notifyOnReady: function(f) {
+		this.onReady = f;
+		if(this.ready) {
+			this.onReady();
+		}
+	}
+	,init: function() {
+		if(this.ready) {
+			return;
+		}
+		this.ready = true;
+		if(!js_Boot.__instanceof(this.object,iron_object_MeshObject)) {
+			return;
+		}
+		this.notifyOnLateUpdate($bind(this,this.lateUpdate));
+		this.notifyOnRemove($bind(this,this.removeFromWorld));
+		this.transform = this.object.transform;
+		this.physics = armory_trait_physics_bullet_PhysicsWorld.active;
+		this._shape = null;
+		this._shapeConvex = null;
+		this.isConvex = false;
+		if(this.shape == 0) {
+			var f = this.transform.dim.x / 2;
+			var f1 = this.transform.dim.y / 2;
+			var f2 = this.transform.dim.z / 2;
+			this._shape = new Ammo.btBoxShape(new Ammo.btVector3(f - f * this.collisionMargin,f1 - f1 * this.collisionMargin,f2 - f2 * this.collisionMargin));
+		} else if(this.shape == 1) {
+			var f3 = this.transform.dim.x / 2;
+			this._shape = new Ammo.btSphereShape(f3 - f3 * this.collisionMargin);
+		} else if(this.shape == 2 || this.shape == 3 && this.mass > 0) {
+			this._shapeConvex = new Ammo.btConvexHullShape();
+			this.isConvex = true;
+			this.addPointsToConvexHull(this._shapeConvex,this.transform.scale,this.collisionMargin);
+		} else if(this.shape == 4) {
+			var f4 = this.transform.dim.x / 2;
+			var f5 = this.transform.dim.z;
+			this._shape = new Ammo.btConeShapeZ(f4 - f4 * this.collisionMargin,f5 - f5 * this.collisionMargin);
+		} else if(this.shape == 5) {
+			var f6 = this.transform.dim.x / 2;
+			var f7 = this.transform.dim.y / 2;
+			var f8 = this.transform.dim.z / 2;
+			this._shape = new Ammo.btCylinderShapeZ(new Ammo.btVector3(f6 - f6 * this.collisionMargin,f7 - f7 * this.collisionMargin,f8 - f8 * this.collisionMargin));
+		} else if(this.shape == 6) {
+			var r = this.transform.dim.x / 2;
+			var f9 = this.transform.dim.z - r * 2;
+			this._shape = new Ammo.btCapsuleShapeZ(r - r * this.collisionMargin,f9 - f9 * this.collisionMargin);
+		} else if(this.shape == 3 || this.shape == 7) {
+			var meshInterface = new Ammo.btTriangleMesh(true,true);
+			this.fillTriangleMesh(meshInterface,this.transform.scale);
+			this._shape = new Ammo.btBvhTriangleMeshShape(meshInterface,true,true);
+		}
+		var _transform = new Ammo.btTransform();
+		_transform.setIdentity();
+		_transform.setOrigin(new Ammo.btVector3(this.transform.world.self._30,this.transform.world.self._31,this.transform.world.self._32));
+		var rot = this.transform.world.getQuat();
+		_transform.setRotation(new Ammo.btQuaternion(rot.x,rot.y,rot.z,rot.w));
+		var _centerOfMassOffset = new Ammo.btTransform();
+		_centerOfMassOffset.setIdentity();
+		this._motionState = new Ammo.btDefaultMotionState(_transform,_centerOfMassOffset);
+		var _inertia = new Ammo.btVector3(0,0,0);
+		if(!this.isConvex) {
+			if(this.mass > 0) {
+				this._shape.calculateLocalInertia(this.mass,_inertia);
+			}
+			var _bodyCI = new Ammo.btRigidBodyConstructionInfo(this.mass,this._motionState,this._shape,_inertia);
+			this.body = new Ammo.btRigidBody(_bodyCI);
+		} else {
+			if(this.mass > 0) {
+				this._shapeConvex.calculateLocalInertia(this.mass,_inertia);
+			}
+			var _bodyCI1 = new Ammo.btRigidBodyConstructionInfo(this.mass,this._motionState,this._shapeConvex,_inertia);
+			this.body = new Ammo.btRigidBody(_bodyCI1);
+		}
+		this.body.setFriction(this.friction);
+		this.body.setRollingFriction(this.friction);
+		this.body.setRestitution(this.restitution);
+		if(this.deactivationParams != null) {
+			this.setDeactivationParams(this.deactivationParams[0],this.deactivationParams[1],this.deactivationParams[2]);
+		} else {
+			this.setActivationState(4);
+		}
+		if(this.linearDamping != 0.04 || this.angularDamping != 0.1) {
+			this.body.setDamping(this.linearDamping,this.angularDamping);
+		}
+		if(this.linearFactors != null) {
+			this.setLinearFactor(this.linearFactors[0],this.linearFactors[1],this.linearFactors[2]);
+		}
+		if(this.angularFactors != null) {
+			this.setAngularFactor(this.angularFactors[0],this.angularFactors[1],this.angularFactors[2]);
+		}
+		if(this.trigger) {
+			this.body.setCollisionFlags(this.body.getCollisionFlags() | 4);
+		}
+		this.bodyScaleX = this.currentScaleX = this.transform.scale.x;
+		this.bodyScaleY = this.currentScaleY = this.transform.scale.y;
+		this.bodyScaleZ = this.currentScaleZ = this.transform.scale.z;
+		this.id = armory_trait_physics_bullet_RigidBody.nextId;
+		armory_trait_physics_bullet_RigidBody.nextId++;
+		this.body.userIndex = this.id;
+		this.physics.addRigidBody(this);
+		if(this.onReady != null) {
+			this.onReady();
+		}
+	}
+	,lateUpdate: function() {
+		if(!this.ready) {
+			return;
+		}
+		if(this.object.animation != null || this.animated) {
+			this.syncTransform();
+		} else {
+			var trans = this.body.getWorldTransform();
+			var p = trans.getOrigin();
+			var q = trans.getRotation();
+			this.transform.loc.set(p.x(),p.y(),p.z());
+			var _this = this.transform.rot;
+			var x = q.x();
+			var y = q.y();
+			var z = q.z();
+			var w = q.w();
+			_this.x = x;
+			_this.y = y;
+			_this.z = z;
+			_this.w = w;
+			if(this.object.parent != null) {
+				var ptransform = this.object.parent.transform;
+				this.transform.loc.x -= ptransform.world.self._30;
+				this.transform.loc.y -= ptransform.world.self._31;
+				this.transform.loc.z -= ptransform.world.self._32;
+			}
+			this.transform.buildMatrix();
+		}
+	}
+	,removeFromWorld: function() {
+		if(this.physics != null) {
+			this.physics.removeRigidBody(this);
+		}
+	}
+	,activate: function() {
+		this.body.activate(false);
+	}
+	,disableGravity: function() {
+		this.body.setGravity(new Ammo.btVector3(0,0,0));
+	}
+	,enableGravity: function() {
+		this.body.setGravity(this.physics.world.getGravity());
+	}
+	,setGravity: function(v) {
+		this.body.setGravity(new Ammo.btVector3(v.x,v.y,v.z));
+	}
+	,setActivationState: function(newState) {
+		this.body.setActivationState(newState);
+	}
+	,setDeactivationParams: function(linearThreshold,angularThreshold,time) {
+		this.body.setSleepingThresholds(linearThreshold,angularThreshold);
+	}
+	,applyForce: function(force,loc) {
+		this.activate();
+		if(loc == null) {
+			this.body.applyCentralForce(new Ammo.btVector3(force.x,force.y,force.z));
+		} else {
+			this.body.applyForce(new Ammo.btVector3(force.x,force.y,force.z),new Ammo.btVector3(loc.x,loc.y,loc.z));
+		}
+	}
+	,applyImpulse: function(impulse,loc) {
+		this.activate();
+		if(loc == null) {
+			this.body.applyCentralImpulse(new Ammo.btVector3(impulse.x,impulse.y,impulse.z));
+		} else {
+			this.body.applyImpulse(new Ammo.btVector3(impulse.x,impulse.y,impulse.z),new Ammo.btVector3(loc.x,loc.y,loc.z));
+		}
+	}
+	,setLinearFactor: function(x,y,z) {
+		this.body.setLinearFactor(new Ammo.btVector3(x,y,z));
+	}
+	,setAngularFactor: function(x,y,z) {
+		this.body.setAngularFactor(new Ammo.btVector3(x,y,z));
+	}
+	,getLinearVelocity: function() {
+		var v = this.body.getLinearVelocity();
+		return new iron_math_Vec4(v.x(),v.y(),v.z());
+	}
+	,setLinearVelocity: function(x,y,z) {
+		this.body.setLinearVelocity(new Ammo.btVector3(x,y,z));
+	}
+	,getAngularVelocity: function() {
+		var v = this.body.getAngularVelocity();
+		return new iron_math_Vec4(v.x(),v.y(),v.z());
+	}
+	,setAngularVelocity: function(x,y,z) {
+		this.body.setAngularVelocity(new Ammo.btVector3(x,y,z));
+	}
+	,setFriction: function(f) {
+		this.body.setFriction(f);
+		this.body.setRollingFriction(f);
+		this.friction = f;
+	}
+	,syncTransform: function() {
+		var t = this.transform;
+		t.buildMatrix();
+		var trans = new Ammo.btTransform();
+		trans.setOrigin(new Ammo.btVector3(t.world.self._30,t.world.self._31,t.world.self._32));
+		var rot = t.world.getQuat();
+		trans.setRotation(new Ammo.btQuaternion(rot.x,rot.y,rot.z,rot.w));
+		this.body.setCenterOfMassTransform(trans);
+		if(this.currentScaleX != t.scale.x || this.currentScaleY != t.scale.y || this.currentScaleZ != t.scale.z) {
+			this.setScale(t.scale);
+		}
+		this.activate();
+	}
+	,setScale: function(v) {
+		this.currentScaleX = v.x;
+		this.currentScaleY = v.y;
+		this.currentScaleZ = v.z;
+		if(this.isConvex) {
+			this._shapeConvex.setLocalScaling(new Ammo.btVector3(this.bodyScaleX * v.x,this.bodyScaleY * v.y,this.bodyScaleZ * v.z));
+		} else {
+			this._shape.setLocalScaling(new Ammo.btVector3(this.bodyScaleX * v.x,this.bodyScaleY * v.y,this.bodyScaleZ * v.z));
+		}
+		this.physics.world.updateSingleAabb(this.body);
+	}
+	,addPointsToConvexHull: function(shape,scale,margin) {
+		var positions = (js_Boot.__cast(this.object , iron_object_MeshObject)).data.geom.positions;
+		var sx = scale.x * (1.0 - margin);
+		var sy = scale.y * (1.0 - margin);
+		var sz = scale.z * (1.0 - margin);
+		var _g1 = 0;
+		var _g = positions.length / 3 | 0;
+		while(_g1 < _g) {
+			var i = _g1++;
+			shape.addPoint(new Ammo.btVector3(positions[i * 3] * sx,positions[i * 3 + 1] * sy,positions[i * 3 + 2] * sz),true);
+		}
+	}
+	,fillTriangleMesh: function(triangleMesh,scale) {
+		var positions = (js_Boot.__cast(this.object , iron_object_MeshObject)).data.geom.positions;
+		var indices = (js_Boot.__cast(this.object , iron_object_MeshObject)).data.geom.indices;
+		var _g = 0;
+		while(_g < indices.length) {
+			var ar = indices[_g];
+			++_g;
+			var _g2 = 0;
+			var _g1 = ar.length / 3 | 0;
+			while(_g2 < _g1) {
+				var i = _g2++;
+				triangleMesh.addTriangle(new Ammo.btVector3(positions[ar[i * 3] * 3] * scale.x,positions[ar[i * 3] * 3 + 1] * scale.y,positions[ar[i * 3] * 3 + 2] * scale.z),new Ammo.btVector3(positions[ar[i * 3 + 1] * 3] * scale.x,positions[ar[i * 3 + 1] * 3 + 1] * scale.y,positions[ar[i * 3 + 1] * 3 + 2] * scale.z),new Ammo.btVector3(positions[ar[i * 3 + 2] * 3] * scale.x,positions[ar[i * 3 + 2] * 3 + 1] * scale.y,positions[ar[i * 3 + 2] * 3 + 2] * scale.z));
+			}
+		}
+	}
+	,__class__: armory_trait_physics_bullet_RigidBody
+});
 var haxe_IMap = $hxClasses["haxe.IMap"] = function() { };
 haxe_IMap.__name__ = true;
 haxe_IMap.prototype = {
@@ -1221,6 +2105,13 @@ haxe_ds_IntMap.__name__ = true;
 haxe_ds_IntMap.__interfaces__ = [haxe_IMap];
 haxe_ds_IntMap.prototype = {
 	h: null
+	,remove: function(key) {
+		if(!this.h.hasOwnProperty(key)) {
+			return false;
+		}
+		delete(this.h[key]);
+		return true;
+	}
 	,keys: function() {
 		var a = [];
 		for( var key in this.h ) if(this.h.hasOwnProperty(key)) {
@@ -8080,6 +8971,293 @@ iron_math_Quat.prototype = {
 	}
 	,__class__: iron_math_Quat
 };
+var iron_math_Ray = $hxClasses["iron.math.Ray"] = function(origin,direction) {
+	this.origin = origin == null ? new iron_math_Vec4() : origin;
+	this.direction = direction == null ? new iron_math_Vec4() : direction;
+};
+iron_math_Ray.__name__ = true;
+iron_math_Ray.prototype = {
+	origin: null
+	,direction: null
+	,at: function(t) {
+		var result = new iron_math_Vec4();
+		return result.setFrom(this.direction).mult(t).add(this.origin);
+	}
+	,distanceToPoint: function(point) {
+		var v1 = new iron_math_Vec4();
+		var directionDistance = v1.subvecs(point,this.origin).dot(this.direction);
+		if(directionDistance < 0) {
+			return this.origin.distanceTo(point);
+		}
+		v1.setFrom(this.direction).mult(directionDistance).add(this.origin);
+		return v1.distanceTo(point);
+	}
+	,intersectsSphere: function(sphereCenter,sphereRadius) {
+		return this.distanceToPoint(sphereCenter) <= sphereRadius;
+	}
+	,intersectsPlane: function(plane) {
+		var distToPoint = plane.distanceToPoint(this.origin);
+		if(distToPoint == 0) {
+			return true;
+		}
+		var denominator = plane.normal.dot(this.direction);
+		if(denominator * distToPoint < 0) {
+			return true;
+		}
+		return false;
+	}
+	,distanceToPlane: function(plane) {
+		var denominator = plane.normal.dot(this.direction);
+		if(denominator == 0) {
+			if(plane.distanceToPoint(this.origin) == 0) {
+				return 0;
+			}
+			return -1;
+		}
+		var t = -(this.origin.dot(plane.normal) + plane.constant) / denominator;
+		if(t >= 0) {
+			return t;
+		} else {
+			return -1;
+		}
+	}
+	,intersectPlane: function(plane) {
+		var t = this.distanceToPlane(plane);
+		if(t == -1) {
+			return null;
+		}
+		return this.at(t);
+	}
+	,intersectsBox: function(center,dim) {
+		return this.intersectBox(center,dim) != null;
+	}
+	,intersectBox: function(center,dim) {
+		var tmin;
+		var tmax;
+		var tymin;
+		var tymax;
+		var tzmin;
+		var tzmax;
+		var halfX = dim.x / 2;
+		var halfY = dim.y / 2;
+		var halfZ = dim.z / 2;
+		var boxMinX = center.x - halfX;
+		var boxMinY = center.y - halfY;
+		var boxMinZ = center.z - halfZ;
+		var boxMaxX = center.x + halfX;
+		var boxMaxY = center.y + halfY;
+		var boxMaxZ = center.z + halfZ;
+		var invdirx = 1 / this.direction.x;
+		var invdiry = 1 / this.direction.y;
+		var invdirz = 1 / this.direction.z;
+		var origin = this.origin;
+		if(invdirx >= 0) {
+			tmin = (boxMinX - origin.x) * invdirx;
+			tmax = (boxMaxX - origin.x) * invdirx;
+		} else {
+			tmin = (boxMaxX - origin.x) * invdirx;
+			tmax = (boxMinX - origin.x) * invdirx;
+		}
+		if(invdiry >= 0) {
+			tymin = (boxMinY - origin.y) * invdiry;
+			tymax = (boxMaxY - origin.y) * invdiry;
+		} else {
+			tymin = (boxMaxY - origin.y) * invdiry;
+			tymax = (boxMinY - origin.y) * invdiry;
+		}
+		if(tmin > tymax || tymin > tmax) {
+			return null;
+		}
+		if(tymin > tmin || tmin != tmin) {
+			tmin = tymin;
+		}
+		if(tymax < tmax || tmax != tmax) {
+			tmax = tymax;
+		}
+		if(invdirz >= 0) {
+			tzmin = (boxMinZ - origin.z) * invdirz;
+			tzmax = (boxMaxZ - origin.z) * invdirz;
+		} else {
+			tzmin = (boxMaxZ - origin.z) * invdirz;
+			tzmax = (boxMinZ - origin.z) * invdirz;
+		}
+		if(tmin > tzmax || tzmin > tmax) {
+			return null;
+		}
+		if(tzmin > tmin || tmin != tmin) {
+			tmin = tzmin;
+		}
+		if(tzmax < tmax || tmax != tmax) {
+			tmax = tzmax;
+		}
+		if(tmax < 0) {
+			return null;
+		}
+		return this.at(tmin >= 0 ? tmin : tmax);
+	}
+	,intersectTriangle: function(a,b,c,backfaceCulling) {
+		var diff = new iron_math_Vec4();
+		var edge1 = new iron_math_Vec4();
+		var edge2 = new iron_math_Vec4();
+		var normal = new iron_math_Vec4();
+		edge1.subvecs(b,a);
+		edge2.subvecs(c,a);
+		normal.crossvecs(edge1,edge2);
+		var DdN = this.direction.dot(normal);
+		var sign;
+		if(DdN > 0) {
+			if(backfaceCulling) {
+				return null;
+			}
+			sign = 1;
+		} else if(DdN < 0) {
+			sign = -1;
+			DdN = -DdN;
+		} else {
+			return null;
+		}
+		diff.subvecs(this.origin,a);
+		var DdQxE2 = sign * this.direction.dot(edge2.crossvecs(diff,edge2));
+		if(DdQxE2 < 0) {
+			return null;
+		}
+		var DdE1xQ = sign * this.direction.dot(edge1.cross(diff));
+		if(DdE1xQ < 0) {
+			return null;
+		}
+		if(DdQxE2 + DdE1xQ > DdN) {
+			return null;
+		}
+		var QdN = -sign * diff.dot(normal);
+		if(QdN < 0) {
+			return null;
+		}
+		return this.at(QdN / DdN);
+	}
+	,__class__: iron_math_Ray
+};
+var iron_math_Plane = $hxClasses["iron.math.Plane"] = function() {
+	this.constant = 0.0;
+	this.normal = new iron_math_Vec4(1.0,0.0,0.0);
+};
+iron_math_Plane.__name__ = true;
+iron_math_Plane.prototype = {
+	normal: null
+	,constant: null
+	,distanceToPoint: function(point) {
+		return this.normal.dot(point) + this.constant;
+	}
+	,set: function(normal,point) {
+		this.normal.setFrom(normal);
+		this.constant = -point.dot(this.normal);
+		return this;
+	}
+	,__class__: iron_math_Plane
+};
+var iron_math_RayCaster = $hxClasses["iron.math.RayCaster"] = function() { };
+iron_math_RayCaster.__name__ = true;
+iron_math_RayCaster.getRay = function(inputX,inputY,camera) {
+	var start = new iron_math_Vec4();
+	var end = new iron_math_Vec4();
+	iron_math_RayCaster.getDirection(start,end,inputX,inputY,camera);
+	end.sub(start);
+	end.normalize();
+	end.x *= camera.data.raw.far_plane;
+	end.y *= camera.data.raw.far_plane;
+	end.z *= camera.data.raw.far_plane;
+	return new iron_math_Ray(start,end);
+};
+iron_math_RayCaster.getDirection = function(start,end,inputX,inputY,camera) {
+	start.x = inputX / kha_System.windowWidth() * 2.0 - 1.0;
+	start.y = -(inputY / kha_System.windowHeight() * 2.0 - 1.0);
+	start.z = -1.0;
+	end.x = start.x;
+	end.y = start.y;
+	end.z = 1.0;
+	iron_math_RayCaster.PInv.getInverse(camera.P);
+	iron_math_RayCaster.VInv.getInverse(camera.V);
+	iron_math_RayCaster.VPInv.multmats(iron_math_RayCaster.VInv,iron_math_RayCaster.PInv);
+	start.applyproj(iron_math_RayCaster.VPInv);
+	end.applyproj(iron_math_RayCaster.VPInv);
+};
+iron_math_RayCaster.boxIntersect = function(transform,inputX,inputY,camera) {
+	var ray = iron_math_RayCaster.getRay(inputX,inputY,camera);
+	var t = transform;
+	var c = new iron_math_Vec4(t.world.self._30,t.world.self._31,t.world.self._32);
+	var s = new iron_math_Vec4(t.dim.x,t.dim.y,t.dim.z);
+	return ray.intersectBox(c,s);
+};
+iron_math_RayCaster.closestBoxIntersect = function(transforms,inputX,inputY,camera) {
+	var intersects = [];
+	var _g = 0;
+	while(_g < transforms.length) {
+		var t = transforms[_g];
+		++_g;
+		var intersect = iron_math_RayCaster.boxIntersect(t,inputX,inputY,camera);
+		if(intersect != null) {
+			intersects.push(t);
+		}
+	}
+	if(intersects.length == 0) {
+		return null;
+	}
+	var closest = null;
+	var minDist = Infinity;
+	var _g1 = 0;
+	while(_g1 < intersects.length) {
+		var t1 = intersects[_g1];
+		++_g1;
+		var v1 = t1.loc;
+		var v2 = camera.transform.loc;
+		var vx = v1.x - v2.x;
+		var vy = v1.y - v2.y;
+		var vz = v1.z - v2.z;
+		var dist = Math.sqrt(vx * vx + vy * vy + vz * vz);
+		if(dist < minDist) {
+			minDist = dist;
+			closest = t1;
+		}
+	}
+	return closest;
+};
+iron_math_RayCaster.planeIntersect = function(normal,a,inputX,inputY,camera) {
+	var ray = iron_math_RayCaster.getRay(inputX,inputY,camera);
+	var plane = new iron_math_Plane();
+	plane.set(normal,a);
+	return ray.intersectPlane(plane);
+};
+iron_math_RayCaster.getPlaneUV = function(obj,screenX,screenY,camera) {
+	var normals = obj.data.geom.normals;
+	iron_math_RayCaster.nor.set(normals[0],normals[1],normals[2]);
+	iron_math_RayCaster.m.setFrom(obj.transform.world);
+	iron_math_RayCaster.m.getInverse(iron_math_RayCaster.m);
+	iron_math_RayCaster.m.transpose3x3();
+	iron_math_RayCaster.m.self._30 = iron_math_RayCaster.m.self._31 = iron_math_RayCaster.m.self._32 = 0;
+	iron_math_RayCaster.nor.applymat(iron_math_RayCaster.m);
+	iron_math_RayCaster.nor.normalize();
+	iron_math_RayCaster.loc.set(obj.transform.world.self._30,obj.transform.world.self._31,obj.transform.world.self._32);
+	var hit = iron_math_RayCaster.planeIntersect(iron_math_RayCaster.nor,iron_math_RayCaster.loc,screenX,screenY,camera);
+	if(hit != null) {
+		var a = iron_math_RayCaster.nor.x;
+		var b = iron_math_RayCaster.nor.y;
+		var c = iron_math_RayCaster.nor.z;
+		var e = 0.0001;
+		var u = a >= e && b >= e ? new iron_math_Vec4(b,-a,0) : new iron_math_Vec4(c,-a,0);
+		u.normalize();
+		var v = iron_math_RayCaster.nor.clone();
+		v.cross(u);
+		hit.sub(iron_math_RayCaster.loc);
+		var uCoord = u.dot(hit);
+		var vCoord = v.dot(hit);
+		var dim = obj.transform.dim;
+		var hx = dim.x / 2;
+		var hy = dim.z > dim.y ? dim.z / 2 : dim.y / 2;
+		var ix = uCoord / hx * -1 * 0.5 + 0.5;
+		var iy = vCoord / hy * 0.5 + 0.5;
+		return new iron_math_Vec2(ix,iy);
+	}
+	return null;
+};
 var iron_math_Rotator = $hxClasses["iron.math.Rotator"] = function(pitch,roll,yaw) {
 	if(yaw == null) {
 		yaw = 0.0;
@@ -8320,6 +9498,168 @@ iron_math_Rotator.prototype = {
 		return "(" + this.pitch + ", " + this.roll + ", " + this.yaw + ")";
 	}
 	,__class__: iron_math_Rotator
+};
+var iron_math_Vec2 = $hxClasses["iron.math.Vec2"] = function(x,y) {
+	if(y == null) {
+		y = 0.0;
+	}
+	if(x == null) {
+		x = 0.0;
+	}
+	this.x = x;
+	this.y = y;
+};
+iron_math_Vec2.__name__ = true;
+iron_math_Vec2.lerp = function(v1,v2,t) {
+	var target = new iron_math_Vec2();
+	target.x = v2.x + (v1.x - v2.x) * t;
+	target.y = v2.y + (v1.y - v2.y) * t;
+	return target;
+};
+iron_math_Vec2.distance = function(v1,v2) {
+	var vx = v1.x - v2.x;
+	var vy = v1.y - v2.y;
+	return Math.sqrt(vx * vx + vy * vy);
+};
+iron_math_Vec2.distancef = function(v1x,v1y,v2x,v2y) {
+	var vx = v1x - v2x;
+	var vy = v1y - v2y;
+	return Math.sqrt(vx * vx + vy * vy);
+};
+iron_math_Vec2.xAxis = function() {
+	return new iron_math_Vec2(1.0,0.0);
+};
+iron_math_Vec2.yAxis = function() {
+	return new iron_math_Vec2(0.0,1.0);
+};
+iron_math_Vec2.one = function() {
+	return new iron_math_Vec2(1.0,1.0);
+};
+iron_math_Vec2.zero = function() {
+	return new iron_math_Vec2(0.0,0.0);
+};
+iron_math_Vec2.back = function() {
+	return new iron_math_Vec2(0.0,-1.0);
+};
+iron_math_Vec2.forward = function() {
+	return new iron_math_Vec2(0.0,1.0);
+};
+iron_math_Vec2.left = function() {
+	return new iron_math_Vec2(-1.0,0.0);
+};
+iron_math_Vec2.right = function() {
+	return new iron_math_Vec2(1.0,0.0);
+};
+iron_math_Vec2.negativeInfinity = function() {
+	return new iron_math_Vec2(-Infinity,-Infinity);
+};
+iron_math_Vec2.positiveInfinity = function() {
+	return new iron_math_Vec2(Infinity,Infinity);
+};
+iron_math_Vec2.prototype = {
+	x: null
+	,y: null
+	,cross: function(v) {
+		return this.x * v.y - this.y * v.x;
+	}
+	,set: function(x,y) {
+		this.x = x;
+		this.y = y;
+		return this;
+	}
+	,add: function(v) {
+		this.x += v.x;
+		this.y += v.y;
+		return this;
+	}
+	,addf: function(x,y) {
+		this.x += x;
+		this.y += y;
+		return this;
+	}
+	,addvecs: function(a,b) {
+		this.x = a.x + b.x;
+		this.y = a.y + b.y;
+		return this;
+	}
+	,subvecs: function(a,b) {
+		this.x = a.x - b.x;
+		this.y = a.y - b.y;
+		return this;
+	}
+	,normalize: function() {
+		var a = this.x;
+		var b = this.y;
+		var l = a * a + b * b;
+		if(l > 0.0) {
+			l = 1.0 / Math.sqrt(l);
+			this.x = a * l;
+			this.y = b * l;
+		}
+		return this;
+	}
+	,mult: function(f) {
+		this.x *= f;
+		this.y *= f;
+		return this;
+	}
+	,dot: function(v) {
+		return this.x * v.x + this.y * v.y;
+	}
+	,setFrom: function(v) {
+		this.x = v.x;
+		this.y = v.y;
+		return this;
+	}
+	,clone: function() {
+		return new iron_math_Vec2(this.x,this.y);
+	}
+	,equals: function(v) {
+		if(this.x == v.x) {
+			return this.y == v.y;
+		} else {
+			return false;
+		}
+	}
+	,length: function() {
+		return Math.sqrt(this.x * this.x + this.y * this.y);
+	}
+	,normalizeTo: function(newLength) {
+		var v = this.normalize();
+		v = this.mult(newLength);
+		return v;
+	}
+	,sub: function(v) {
+		this.x -= v.x;
+		this.y -= v.y;
+		return this;
+	}
+	,distanceTo: function(p) {
+		return Math.sqrt((p.x - this.x) * (p.x - this.x) + (p.y - this.y) * (p.y - this.y));
+	}
+	,clamp: function(fmin,fmax) {
+		var n = Math.sqrt(this.x * this.x + this.y * this.y);
+		var v = this;
+		if(n < fmin) {
+			var v1 = this.normalize();
+			v1 = this.mult(fmin);
+			v = v1;
+		} else if(n > fmax) {
+			var v2 = this.normalize();
+			v2 = this.mult(fmax);
+			v = v2;
+		}
+		return v;
+	}
+	,map: function(value,leftMin,leftMax,rightMin,rightMax) {
+		this.x = iron_math_Math.map(value.x,leftMin.x,leftMax.x,rightMin.x,rightMax.x);
+		this.y = iron_math_Math.map(value.y,leftMin.y,leftMax.y,rightMin.y,rightMax.y);
+		return this;
+	}
+	,toString: function() {
+		return "(" + this.x + ", " + this.y + ")";
+	}
+	,__class__: iron_math_Vec2
 };
 var iron_object_Animation = $hxClasses["iron.object.Animation"] = function() {
 	this.markerEvents = null;
@@ -15588,20 +16928,20 @@ kha_Shaders.init = function() {
 	var _g28 = 0;
 	while(_g28 < 1) {
 		var i28 = _g28++;
-		var data28 = Reflect.field(kha_Shaders,"painter_image_vertData" + i28);
+		var data28 = Reflect.field(kha_Shaders,"painter_image_fragData" + i28);
 		var bytes28 = haxe_Unserializer.run(data28);
 		blobs28.push(kha_internal_BytesBlob.fromBytes(bytes28));
 	}
-	kha_Shaders.painter_image_vert = new kha_graphics4_VertexShader(blobs28,["painter-image.vert.glsl"]);
+	kha_Shaders.painter_image_frag = new kha_graphics4_FragmentShader(blobs28,["painter-image.frag.glsl"]);
 	var blobs29 = [];
 	var _g29 = 0;
 	while(_g29 < 1) {
 		var i29 = _g29++;
-		var data29 = Reflect.field(kha_Shaders,"painter_image_fragData" + i29);
+		var data29 = Reflect.field(kha_Shaders,"painter_image_vertData" + i29);
 		var bytes29 = haxe_Unserializer.run(data29);
 		blobs29.push(kha_internal_BytesBlob.fromBytes(bytes29));
 	}
-	kha_Shaders.painter_image_frag = new kha_graphics4_FragmentShader(blobs29,["painter-image.frag.glsl"]);
+	kha_Shaders.painter_image_vert = new kha_graphics4_VertexShader(blobs29,["painter-image.vert.glsl"]);
 	var blobs30 = [];
 	var _g30 = 0;
 	while(_g30 < 1) {
@@ -31570,6 +32910,9 @@ var Uint8Array = $global.Uint8Array || js_html_compat_Uint8Array._new;
 Main.projectName = "SpaceShooterblend";
 Main.projectPackage = "arm";
 armory_renderpath_RenderPathCreator.drawMeshes = armory_renderpath_RenderPathDeferred.drawMeshes;
+armory_trait_physics_bullet_KinematicCharacterController.nextId = 0;
+armory_trait_physics_bullet_PhysicsWorld.sceneRemoved = false;
+armory_trait_physics_bullet_RigidBody.nextId = 0;
 haxe_Unserializer.DEFAULT_RESOLVER = new haxe__$Unserializer_DefaultResolver();
 haxe_Unserializer.BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%:";
 haxe_ds_ObjectMap.count = 0;
@@ -31646,6 +32989,12 @@ iron_math_Math.SQRT1_2 = 0.70710678118654752440;
 iron_math_Quat.helpVec0 = new iron_math_Vec4();
 iron_math_Quat.helpVec1 = new iron_math_Vec4();
 iron_math_Quat.helpVec2 = new iron_math_Vec4();
+iron_math_RayCaster.VPInv = iron_math_Mat4.identity();
+iron_math_RayCaster.PInv = iron_math_Mat4.identity();
+iron_math_RayCaster.VInv = iron_math_Mat4.identity();
+iron_math_RayCaster.loc = new iron_math_Vec4();
+iron_math_RayCaster.nor = new iron_math_Vec4();
+iron_math_RayCaster.m = iron_math_Mat4.identity();
 iron_object_Animation.m1 = iron_math_Mat4.identity();
 iron_object_Animation.m2 = iron_math_Mat4.identity();
 iron_object_Animation.vpos = new iron_math_Vec4();
@@ -31750,8 +33099,8 @@ kha_Shaders.armdefault_mesh_vertData0 = "s408:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUk
 kha_Shaders.armdefault_shadowmap_vertData0 = "s303:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgTFdWUDsKCmluIHZlYzMgcG9zOwoKdm9pZCBtYWluKCkKewogICAgdmVjNCBzcG9zID0gdmVjNChwb3MsIDEuMCk7CiAgICBnbF9Qb3NpdGlvbiA9IExXVlAgKiBzcG9zOwp9Cgo";
 kha_Shaders.painter_colored_fragData0 = "s274:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgpvdXQgdmVjNCBGcmFnQ29sb3I7CmluIHZlYzQgZnJhZ21lbnRDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIEZyYWdDb2xvciA9IGZyYWdtZW50Q29sb3I7Cn0KCg";
 kha_Shaders.painter_colored_vertData0 = "s439:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWM0IGZyYWdtZW50Q29sb3I7CmluIHZlYzQgdmVydGV4Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBnbF9Qb3NpdGlvbiA9IHByb2plY3Rpb25NYXRyaXggKiB2ZWM0KHZlcnRleFBvc2l0aW9uLCAxLjApOwogICAgZnJhZ21lbnRDb2xvciA9IHZlcnRleENvbG9yOwp9Cgo";
-kha_Shaders.painter_image_vertData0 = "s508:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWMyIHRleENvb3JkOwppbiB2ZWMyIHRleFBvc2l0aW9uOwpvdXQgdmVjNCBjb2xvcjsKaW4gdmVjNCB2ZXJ0ZXhDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIGdsX1Bvc2l0aW9uID0gcHJvamVjdGlvbk1hdHJpeCAqIHZlYzQodmVydGV4UG9zaXRpb24sIDEuMCk7CiAgICB0ZXhDb29yZCA9IHRleFBvc2l0aW9uOwogICAgY29sb3IgPSB2ZXJ0ZXhDb2xvcjsKfQoK";
 kha_Shaders.painter_image_fragData0 = "s506:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIHNhbXBsZXIyRCB0ZXg7CgppbiB2ZWMyIHRleENvb3JkOwppbiB2ZWM0IGNvbG9yOwpvdXQgdmVjNCBGcmFnQ29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICB2ZWM0IHRleGNvbG9yID0gdGV4dHVyZSh0ZXgsIHRleENvb3JkKSAqIGNvbG9yOwogICAgdmVjMyBfMzIgPSB0ZXhjb2xvci54eXogKiBjb2xvci53OwogICAgdGV4Y29sb3IgPSB2ZWM0KF8zMi54LCBfMzIueSwgXzMyLnosIHRleGNvbG9yLncpOwogICAgRnJhZ0NvbG9yID0gdGV4Y29sb3I7Cn0KCg";
+kha_Shaders.painter_image_vertData0 = "s508:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWMyIHRleENvb3JkOwppbiB2ZWMyIHRleFBvc2l0aW9uOwpvdXQgdmVjNCBjb2xvcjsKaW4gdmVjNCB2ZXJ0ZXhDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIGdsX1Bvc2l0aW9uID0gcHJvamVjdGlvbk1hdHJpeCAqIHZlYzQodmVydGV4UG9zaXRpb24sIDEuMCk7CiAgICB0ZXhDb29yZCA9IHRleFBvc2l0aW9uOwogICAgY29sb3IgPSB2ZXJ0ZXhDb2xvcjsKfQoK";
 kha_Shaders.painter_text_fragData0 = "s402:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIHNhbXBsZXIyRCB0ZXg7CgpvdXQgdmVjNCBGcmFnQ29sb3I7CmluIHZlYzQgZnJhZ21lbnRDb2xvcjsKaW4gdmVjMiB0ZXhDb29yZDsKCnZvaWQgbWFpbigpCnsKICAgIEZyYWdDb2xvciA9IHZlYzQoZnJhZ21lbnRDb2xvci54eXosIHRleHR1cmUodGV4LCB0ZXhDb29yZCkueCAqIGZyYWdtZW50Q29sb3Iudyk7Cn0KCg";
 kha_Shaders.painter_text_vertData0 = "s530:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWMyIHRleENvb3JkOwppbiB2ZWMyIHRleFBvc2l0aW9uOwpvdXQgdmVjNCBmcmFnbWVudENvbG9yOwppbiB2ZWM0IHZlcnRleENvbG9yOwoKdm9pZCBtYWluKCkKewogICAgZ2xfUG9zaXRpb24gPSBwcm9qZWN0aW9uTWF0cml4ICogdmVjNCh2ZXJ0ZXhQb3NpdGlvbiwgMS4wKTsKICAgIHRleENvb3JkID0gdGV4UG9zaXRpb247CiAgICBmcmFnbWVudENvbG9yID0gdmVydGV4Q29sb3I7Cn0KCg";
 kha_Shaders.painter_video_fragData0 = "s506:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIHNhbXBsZXIyRCB0ZXg7CgppbiB2ZWMyIHRleENvb3JkOwppbiB2ZWM0IGNvbG9yOwpvdXQgdmVjNCBGcmFnQ29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICB2ZWM0IHRleGNvbG9yID0gdGV4dHVyZSh0ZXgsIHRleENvb3JkKSAqIGNvbG9yOwogICAgdmVjMyBfMzIgPSB0ZXhjb2xvci54eXogKiBjb2xvci53OwogICAgdGV4Y29sb3IgPSB2ZWM0KF8zMi54LCBfMzIueSwgXzMyLnosIHRleGNvbG9yLncpOwogICAgRnJhZ0NvbG9yID0gdGV4Y29sb3I7Cn0KCg";

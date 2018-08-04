@@ -20,6 +20,7 @@
       <sourceFolder url="file:///Users/kent/Desktop/Space Shooter/Sources" isTestSource="false" />
       <sourceFolder url="file:///Users/kent/Applications/Armory/blender.app/armsdk/armory/Sources" isTestSource="false" />
       <sourceFolder url="file:///Users/kent/Applications/Armory/blender.app/armsdk/iron/Sources" isTestSource="false" />
+      <sourceFolder url="file:///Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet/Sources" isTestSource="false" />
 
     </content>
     <content url="file:///Users/kent/Applications/Armory/blender.app/armsdk/armory">
@@ -27,6 +28,9 @@
     </content>
     <content url="file:///Users/kent/Applications/Armory/blender.app/armsdk/iron">
       <sourceFolder url="file:///Users/kent/Applications/Armory/blender.app/armsdk/iron" isTestSource="false" />
+    </content>
+    <content url="file:///Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet">
+      <sourceFolder url="file:///Users/kent/Applications/Armory/blender.app/armsdk/lib/haxebullet" isTestSource="false" />
     </content>
     
     <orderEntry type="jdk" jdkName="Haxe 3.2.0" jdkType="Haxe toolkit" />
