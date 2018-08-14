@@ -51,6 +51,7 @@ project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/com
 project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/meshes/mesh_Cube.006.arm", { notinlist: true });
 project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/meshes/mesh_Cube.arm", { notinlist: true });
 project.addAssets("/Users/kent/Desktop/Space Shooter/build_SpaceShooterblend/compiled/Assets/meshes/mesh_Cylinder.002.arm", { notinlist: true });
+project.addAssets("Bundled/laser.wav", { notinlist: true , quality: 0.8999999761581421});
 project.addAssets("build_SpaceShooterblend/compiled/Assets/envmaps/World_irradiance.arm", { notinlist: true });
 project.addDefine('arm_deferred');
 project.addDefine('arm_csm');

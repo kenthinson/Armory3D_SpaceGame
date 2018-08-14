@@ -3,12 +3,16 @@ import iron.system.Input;
 import iron.system.Time;
 
 class PlayerController extends iron.Trait {
+	private var fireSound:kha.Sound;
 	private var timeSinceLastFire = 0.0;
 	public function new() {
 		super();
 
-		// notifyOnInit(function() {
-		// });
+		notifyOnInit(function() {
+			iron.data.Data.getSound('laser.wav', function(soundFromDisk:kha.Sound){
+				fireSound = soundFromDisk;
+			});
+		});
 
 		//called every frame 
 		notifyOnUpdate(function() {
@@ -50,6 +54,7 @@ class PlayerController extends iron.Trait {
 						bullet.transform.loc.set(object.transform.loc.x,object.transform.loc.y,object.transform.loc.z);
 					});
 					timeSinceLastFire = 0.0;
+					iron.system.Audio.play(fireSound);
 				}
 				timeSinceLastFire += Time.delta;
 			}
