@@ -1505,9 +1505,12 @@ armory_trait_physics_bullet_RigidBody.prototype = $extend(iron_Trait.prototype,{
 			var f3 = this.transform.dim.x / 2;
 			this._shape = new Ammo.btSphereShape(f3 - f3 * this.collisionMargin);
 		} else if(this.shape == 2 || this.shape == 3 && this.mass > 0) {
+			if(this.shape == 3 && this.mass > 0) {
+				haxe_Log.trace("Armory Warning: object " + this.object.name + " - dynamic mesh shape not yet implemented, using convex hull instead",{ fileName : "RigidBody.hx", lineNumber : 106, className : "armory.trait.physics.bullet.RigidBody", methodName : "init"});
+			}
 			this._shapeConvex = new Ammo.btConvexHullShape();
 			this.isConvex = true;
-			this.addPointsToConvexHull(this._shapeConvex,this.transform.scale,this.collisionMargin);
+			this.fillConvexHull(this._shapeConvex,this.transform.scale,this.collisionMargin);
 		} else if(this.shape == 4) {
 			var f4 = this.transform.dim.x / 2;
 			var f5 = this.transform.dim.z;
@@ -1696,7 +1699,7 @@ armory_trait_physics_bullet_RigidBody.prototype = $extend(iron_Trait.prototype,{
 		}
 		this.physics.world.updateSingleAabb(this.body);
 	}
-	,addPointsToConvexHull: function(shape,scale,margin) {
+	,fillConvexHull: function(shape,scale,margin) {
 		var positions = (js_Boot.__cast(this.object , iron_object_MeshObject)).data.geom.positions;
 		var sx = scale.x * (1.0 - margin);
 		var sy = scale.y * (1.0 - margin);
@@ -2811,6 +2814,7 @@ iron_App.update = function() {
 	}
 };
 iron_App.render = function(frame) {
+	iron_App.framebuffer = frame;
 	if(iron_Scene.active == null || !iron_Scene.active.ready) {
 		iron_App.render2D(frame);
 		return;
@@ -3776,8 +3780,8 @@ iron_Scene.setActive = function(sceneName,done) {
 iron_Scene.generateTransform = function(object,transform) {
 	transform.world = object.transform != null ? iron_math_Mat4.fromFloat32Array(object.transform.values) : iron_math_Mat4.identity();
 	transform.world.decompose(transform.loc,transform.rot,transform.scale);
-	if(object.local_transform_only != null) {
-		transform.localOnly = object.local_transform_only;
+	if(object.local_only != null) {
+		transform.localOnly = object.local_only;
 	}
 	if(transform.object.parent != null) {
 		transform.update();
@@ -3804,7 +3808,7 @@ iron_Scene.createTraits = function(traits,object) {
 			}
 			var traitInst = iron_Scene.createTraitClassInstance(t.class_name,args);
 			if(traitInst == null) {
-				haxe_Log.trace("Error: Trait '" + t.class_name + "' referenced in object '" + object.name + "' not found",{ fileName : "Scene.hx", lineNumber : 570, className : "iron.Scene", methodName : "createTraits"});
+				haxe_Log.trace("Error: Trait '" + t.class_name + "' referenced in object '" + object.name + "' not found",{ fileName : "Scene.hx", lineNumber : 578, className : "iron.Scene", methodName : "createTraits"});
 				continue;
 			}
 			if(t.props != null) {
@@ -4356,6 +4360,13 @@ iron_Scene.prototype = {
 			}
 		}
 		return null;
+	}
+	,isLod: function(raw) {
+		if(raw != null && raw.lods != null) {
+			return raw.lods.length > 0;
+		} else {
+			return false;
+		}
 	}
 	,returnMeshObject: function(object_file,data_ref,sceneName,armature,materials,parent,o,done) {
 		var _gthis = this;
@@ -5783,11 +5794,14 @@ iron_data_Geometry.prototype = {
 		}
 		vb.unlock();
 	}
-	,copyVertices: function(vertices,offset) {
+	,copyVertices: function(vertices,offset,fakeUVs) {
+		if(fakeUVs == null) {
+			fakeUVs = false;
+		}
 		if(offset == null) {
 			offset = 0;
 		}
-		iron_data_Geometry.buildVertices(vertices,this.positions,this.normals,this.uvs,this.uvs1,this.cols,this.tangents,this.bones,this.weights,offset);
+		iron_data_Geometry.buildVertices(vertices,this.positions,this.normals,this.uvs,this.uvs1,this.cols,this.tangents,this.bones,this.weights,offset,fakeUVs);
 	}
 	,getVerticesLength: function() {
 		var res = this.positions.length;
@@ -6211,15 +6225,8 @@ var iron_data_MeshBatch = $hxClasses["iron.data.MeshBatch"] = function() {
 	this.buckets = new haxe_ds_ObjectMap();
 };
 iron_data_MeshBatch.__name__ = true;
-iron_data_MeshBatch.isLod = function(m) {
-	if(m.raw != null && m.raw.lods != null) {
-		return m.raw.lods.length > 0;
-	} else {
-		return false;
-	}
-};
 iron_data_MeshBatch.isBatchable = function(m) {
-	return !(m.data.isSkinned || m.materials == null || m.materials.length > 1 || iron_data_MeshBatch.isLod(m) || m.data.geom.instanced);
+	return !(m.data.isSkinned || m.materials == null || m.materials.length > 1 || m.data.geom.instanced);
 };
 iron_data_MeshBatch.prototype = {
 	buckets: null
@@ -6231,10 +6238,10 @@ iron_data_MeshBatch.prototype = {
 			this.remove();
 		}
 	}
-	,addMesh: function(m) {
-		if(!iron_data_MeshBatch.isBatchable(m)) {
+	,addMesh: function(m,isLod) {
+		if(!iron_data_MeshBatch.isBatchable(m) || isLod) {
 			this.nonBatched.push(m);
-			return;
+			return false;
 		}
 		var shader = m.materials[0].shader;
 		var b = this.buckets.h[shader.__id__];
@@ -6243,6 +6250,7 @@ iron_data_MeshBatch.prototype = {
 			this.buckets.set(shader,b);
 		}
 		b.addMesh(m);
+		return true;
 	}
 	,removeMesh: function(m) {
 		var shader = m.materials[0].shader;
@@ -6308,63 +6316,90 @@ iron_data_Bucket.prototype = {
 	,removeMesh: function(m) {
 		HxOverrides.remove(this.meshes,m);
 	}
+	,vertexCount: function(g,hasUVs) {
+		var vcount = g.getVerticesLength();
+		if(hasUVs && g.uvs == null) {
+			vcount += (g.positions.length / 3 | 0) * 2;
+		}
+		return vcount;
+	}
 	,batch: function() {
 		this.batched = true;
-		var vcount = 0;
-		var icount = 0;
-		var mdatas = [];
+		var hasUVs = false;
 		var _g = 0;
 		var _g1 = this.meshes;
 		while(_g < _g1.length) {
 			var m = _g1[_g];
 			++_g;
+			if(m.data.geom.uvs != null) {
+				hasUVs = true;
+				break;
+			}
+		}
+		var vcount = 0;
+		var icount = 0;
+		var mdatas = [];
+		var _g2 = 0;
+		var _g11 = this.meshes;
+		while(_g2 < _g11.length) {
+			var m1 = _g11[_g2];
+			++_g2;
 			var mdFound = false;
-			var _g2 = 0;
-			while(_g2 < mdatas.length) {
-				var md = mdatas[_g2];
-				++_g2;
-				if(m.data == md) {
+			var _g21 = 0;
+			while(_g21 < mdatas.length) {
+				var md = mdatas[_g21];
+				++_g21;
+				if(m1.data == md) {
 					mdFound = true;
 					break;
 				}
 			}
 			if(!mdFound) {
-				mdatas.push(m.data);
-				m.data.start = icount;
-				m.data.count = m.data.geom.indices[0].length;
-				icount += m.data.count;
-				vcount += m.data.geom.getVerticesLength();
+				mdatas.push(m1.data);
+				m1.data.start = icount;
+				m1.data.count = m1.data.geom.indices[0].length;
+				icount += m1.data.count;
+				vcount += this.vertexCount(m1.data.geom,hasUVs);
 			}
 		}
 		if(mdatas.length == 0) {
 			return;
 		}
-		this.vertexBuffer = new kha_graphics4_VertexBuffer(vcount,mdatas[0].geom.struct,kha_graphics4_Usage.StaticUsage);
-		var vertices = this.vertexBuffer.lock();
-		var offset = 0;
+		var vs = mdatas[0].geom.struct;
 		var _g3 = 0;
 		while(_g3 < mdatas.length) {
 			var md1 = mdatas[_g3];
 			++_g3;
-			md1.geom.copyVertices(vertices,offset);
-			offset += md1.geom.getVerticesLength();
+			if(md1.geom.struct.size() > vs.size()) {
+				vs = md1.geom.struct;
+			}
+		}
+		this.vertexBuffer = new kha_graphics4_VertexBuffer(vcount,vs,kha_graphics4_Usage.StaticUsage);
+		var vertices = this.vertexBuffer.lock();
+		var offset = 0;
+		var _g4 = 0;
+		while(_g4 < mdatas.length) {
+			var md2 = mdatas[_g4];
+			++_g4;
+			md2.geom.copyVertices(vertices,offset,hasUVs);
+			offset += this.vertexCount(md2.geom,hasUVs);
 		}
 		this.vertexBuffer.unlock();
 		this.indexBuffer = new kha_graphics4_IndexBuffer(icount,kha_graphics4_Usage.StaticUsage);
 		var indices = this.indexBuffer.lock();
 		var di = -1;
 		var offset1 = 0;
-		var _g4 = 0;
-		while(_g4 < mdatas.length) {
-			var md2 = mdatas[_g4];
-			++_g4;
-			var _g21 = 0;
-			var _g11 = md2.geom.indices[0].length;
-			while(_g21 < _g11) {
-				var i = _g21++;
-				indices[++di] = md2.geom.indices[0][i] + offset1;
+		var _g5 = 0;
+		while(_g5 < mdatas.length) {
+			var md3 = mdatas[_g5];
+			++_g5;
+			var _g22 = 0;
+			var _g12 = md3.geom.indices[0].length;
+			while(_g22 < _g12) {
+				var i = _g22++;
+				indices[++di] = md3.geom.indices[0][i] + offset1;
 			}
-			offset1 += md2.geom.getVerticesLength() / md2.geom.structLength | 0;
+			offset1 += md3.geom.getVerticesLength() / md3.geom.structLength | 0;
 		}
 		this.indexBuffer.unlock();
 	}
@@ -9227,17 +9262,13 @@ iron_math_RayCaster.planeIntersect = function(normal,a,inputX,inputY,camera) {
 	return ray.intersectPlane(plane);
 };
 iron_math_RayCaster.getPlaneUV = function(obj,screenX,screenY,camera) {
-	var normals = obj.data.geom.normals;
-	iron_math_RayCaster.nor.set(normals[0],normals[1],normals[2]);
-	iron_math_RayCaster.m.setFrom(obj.transform.world);
-	iron_math_RayCaster.m.getInverse(iron_math_RayCaster.m);
-	iron_math_RayCaster.m.transpose3x3();
-	iron_math_RayCaster.m.self._30 = iron_math_RayCaster.m.self._31 = iron_math_RayCaster.m.self._32 = 0;
-	iron_math_RayCaster.nor.applymat(iron_math_RayCaster.m);
-	iron_math_RayCaster.nor.normalize();
+	var _this = obj.transform.world;
+	iron_math_RayCaster.nor = new iron_math_Vec4(_this.self._20,_this.self._21,_this.self._22);
 	iron_math_RayCaster.loc.set(obj.transform.world.self._30,obj.transform.world.self._31,obj.transform.world.self._32);
 	var hit = iron_math_RayCaster.planeIntersect(iron_math_RayCaster.nor,iron_math_RayCaster.loc,screenX,screenY,camera);
 	if(hit != null) {
+		var normals = obj.data.geom.normals;
+		iron_math_RayCaster.nor.set(normals[0],normals[1],normals[2]);
 		var a = iron_math_RayCaster.nor.x;
 		var b = iron_math_RayCaster.nor.y;
 		var c = iron_math_RayCaster.nor.z;
@@ -9246,14 +9277,21 @@ iron_math_RayCaster.getPlaneUV = function(obj,screenX,screenY,camera) {
 		u.normalize();
 		var v = iron_math_RayCaster.nor.clone();
 		v.cross(u);
+		iron_math_RayCaster.m.setFrom(obj.transform.world);
+		iron_math_RayCaster.m.getInverse(iron_math_RayCaster.m);
+		iron_math_RayCaster.m.transpose3x3();
+		iron_math_RayCaster.m.self._30 = iron_math_RayCaster.m.self._31 = iron_math_RayCaster.m.self._32 = 0;
+		u.applymat(iron_math_RayCaster.m);
+		u.normalize();
+		v.applymat(iron_math_RayCaster.m);
+		v.normalize();
 		hit.sub(iron_math_RayCaster.loc);
-		var uCoord = u.dot(hit);
-		var vCoord = v.dot(hit);
+		var ucoord = u.dot(hit);
+		var vcoord = v.dot(hit);
 		var dim = obj.transform.dim;
-		var hx = dim.x / 2;
-		var hy = dim.z > dim.y ? dim.z / 2 : dim.y / 2;
-		var ix = uCoord / hx * -1 * 0.5 + 0.5;
-		var iy = vCoord / hy * 0.5 + 0.5;
+		var size = dim.x > dim.y ? dim.x / 2 : dim.y / 2;
+		var ix = ucoord / size * -0.5 + 0.5;
+		var iy = vcoord / size * -0.5 + 0.5;
 		return new iron_math_Vec2(ix,iy);
 	}
 	return null;
@@ -9800,7 +9838,7 @@ iron_object_Animation.prototype = {
 			}
 			this.lastFrameIndex = this.frameIndex;
 		}
-		if(this.speed > 0 ? this.frameIndex >= track.frames.length - 1 : this.frameIndex <= 0) {
+		if(this.isTrackEnd(track)) {
 			if(this.loop || this.blendTime > 0) {
 				this.rewind(track);
 			} else {
@@ -9872,7 +9910,7 @@ var iron_object_BoneAnimation = $hxClasses["iron.object.BoneAnimation"] = functi
 	if(armatureName == null) {
 		armatureName = "";
 	}
-	this.onUpdate = null;
+	this.onUpdates = null;
 	this.nor = new iron_math_Vec4();
 	this.pos = new iron_math_Vec4();
 	this.bm = iron_math_Mat4.identity();
@@ -9986,9 +10024,15 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 				t.boneParent = iron_math_Mat4.identity();
 			}
 			if(o.raw.parent_bone_tail != null) {
-				var v = this.isSkinned ? o.raw.parent_bone_tail : o.raw.parent_bone_tail_y;
-				t.boneParent.initTranslate(v[0],v[1],v[2]);
-				t.boneParent.multmat2(bm);
+				if(o.raw.parent_bone_connected || this.isSkinned) {
+					var v = o.raw.parent_bone_tail;
+					t.boneParent.initTranslate(v[0],v[1],v[2]);
+					t.boneParent.multmat2(bm);
+				} else {
+					var v1 = o.raw.parent_bone_tail_pose;
+					t.boneParent.setFrom(bm);
+					t.boneParent.translate(v1[0],v1[1],v1[2]);
+				}
 			} else {
 				t.boneParent.setFrom(bm);
 			}
@@ -10103,8 +10147,14 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 			}
 		}
 		this.updateConstraints();
-		if(this.onUpdate != null) {
-			this.onUpdate();
+		if(this.onUpdates != null) {
+			var _g5 = 0;
+			var _g14 = this.onUpdates;
+			while(_g5 < _g14.length) {
+				var f = _g14[_g5];
+				++_g5;
+				f();
+			}
 		}
 		if(this.isSkinned) {
 			this.updateSkinGpu();
@@ -10165,9 +10215,15 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 			}
 		}
 	}
-	,onUpdate: null
+	,onUpdates: null
 	,notifyOnUpdate: function(f) {
-		this.onUpdate = f;
+		if(this.onUpdates == null) {
+			this.onUpdates = [];
+		}
+		this.onUpdates.push(f);
+	}
+	,removeUpdate: function(f) {
+		HxOverrides.remove(this.onUpdates,f);
 	}
 	,updateBonesOnly: function() {
 		var _g1 = 0;
@@ -10182,19 +10238,10 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 			}
 		}
 	}
-	,multParent: function(m,bone,mats,bones) {
-		var p = bone.parent;
-		while(p != null) {
-			var boneIndex = this.getBoneIndex(p,bones);
-			if(boneIndex == -1) {
-				continue;
-			}
-			var pm = mats[boneIndex];
-			m.multmat2(pm);
-			p = p.parent;
+	,multParent: function(m,bone,mats,bones,applyParentFlag) {
+		if(applyParentFlag == null) {
+			applyParentFlag = false;
 		}
-	}
-	,multParent2: function(m,bone,mats,bones) {
 		var p = bone.parent;
 		while(p != null) {
 			var boneIndex = this.getBoneIndex(p,bones);
@@ -10204,7 +10251,7 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 			var pm = mats[boneIndex];
 			m.multmat2(pm);
 			p = p.parent;
-			if(this.applyParent != null && !this.applyParent[boneIndex]) {
+			if(applyParentFlag && this.applyParent != null && !this.applyParent[boneIndex]) {
 				break;
 			}
 		}
@@ -10245,7 +10292,7 @@ iron_object_BoneAnimation.prototype = $extend(iron_object_Animation.prototype,{
 				this.m.setFrom(this.skeletonMats[i]);
 				var r = this.applyParent == null || this.applyParent[i];
 				if(r) {
-					this.multParent2(this.m,bones[i],this.skeletonMats,this.skeletonBones);
+					this.multParent(this.m,bones[i],this.skeletonMats,this.skeletonBones,true);
 				}
 			}
 			if(this.absMats != null && i < this.absMats.length) {
@@ -11296,10 +11343,7 @@ iron_object_MeshObject.prototype = $extend(iron_object_Object.prototype,{
 	,setData: function(data) {
 		this.data = data;
 		data.refcount++;
-		var makeBuffers = true;
-		if(makeBuffers) {
-			data.geom.build();
-		}
+		data.geom.build();
 	}
 	,remove: function() {
 		if(this.particleChildren != null) {
@@ -11513,7 +11557,7 @@ iron_object_MeshObject.prototype = $extend(iron_object_Object.prototype,{
 		var lod = this;
 		if(this.raw != null && this.raw.lods != null && this.raw.lods.length > 0) {
 			var tr = this.transform;
-			var volume = tr.dim.x * tr.scale.x * tr.dim.y * tr.scale.y * tr.dim.z * tr.scale.z;
+			var volume = tr.dim.x * tr.dim.y * tr.dim.z;
 			this.screenSize = volume * (1.0 / this.cameraDistance);
 			this.screenSize = this.screenSize > 1.0 ? 1.0 : this.screenSize;
 			if(this.lods == null) {
@@ -11618,7 +11662,7 @@ iron_object_MeshObject.prototype = $extend(iron_object_Object.prototype,{
 	}
 	,computeScreenSize: function(camera) {
 		var tr = this.transform;
-		var volume = tr.dim.x * tr.scale.x * tr.dim.y * tr.scale.y * tr.dim.z * tr.scale.z;
+		var volume = tr.dim.x * tr.dim.y * tr.dim.z;
 		this.screenSize = volume * (1.0 / this.cameraDistance);
 		this.screenSize = this.screenSize > 1.0 ? 1.0 : this.screenSize;
 	}
@@ -11644,6 +11688,8 @@ iron_object_MeshObject.prototype = $extend(iron_object_Object.prototype,{
 	,__class__: iron_object_MeshObject
 });
 var iron_object_ObjectAnimation = $hxClasses["iron.object.ObjectAnimation"] = function(object,oactions) {
+	this.bezierFrameIndex = -1;
+	this.s0 = 0.0;
 	this.object = object;
 	this.oactions = oactions;
 	this.isSkinned = false;
@@ -11718,15 +11764,29 @@ iron_object_ObjectAnimation.prototype = $extend(iron_object_Animation.prototype,
 			this.object.transform.buildMatrix();
 		}
 	}
-	,interpolateLinear: function(t,t1,t2) {
-		return (t - t1) / (t2 - t1);
+	,interpolateLinear: function(t,t1,t2,v1,v2) {
+		var s = (t - t1) / (t2 - t1);
+		return (1.0 - s) * v1 + s * v2;
 	}
-	,interpolateBezier: function(t,t1,t2) {
-		var k = (t - t1) / (t2 - t1);
-		k = k * k * (3.0 - 2.0 * k);
-		return k;
+	,s0: null
+	,bezierFrameIndex: null
+	,interpolateBezier: function(t,t1,t2,v1,v2,c1,c2,p1,p2) {
+		if(this.frameIndex != this.bezierFrameIndex) {
+			this.bezierFrameIndex = this.frameIndex;
+			this.s0 = (t - t1) / (t2 - t1);
+		}
+		var a = (t2 - 3 * c2 + 3 * c1 - t1) * (this.s0 * this.s0 * this.s0) + 3 * (c2 - 2 * c1 + t1) * (this.s0 * this.s0) + 3 * (c1 - t1) * this.s0 + t1 - t;
+		var b = 3 * (t2 - 3 * c2 + 3 * c1 - t1) * (this.s0 * this.s0) + 6 * (c2 - 2 * c1 + t1) * this.s0 + 3 * (c1 - t1);
+		var s = this.s0 - a / b;
+		this.s0 = s;
+		return (1 - s) * (1 - s) * (1 - s) * v1 + 3 * s * (1 - s) * (1 - s) * p1 + 3 * (s * s) * (1 - s) * p2 + s * s * s * v2;
 	}
-	,interpolateTcb: function() {
+	,isTrackEnd: function(track) {
+		if(this.speed > 0) {
+			return this.frameIndex >= track.frames.length - 2;
+		} else {
+			return this.frameIndex <= 0;
+		}
 	}
 	,checkFrameIndexT: function(frameValues,t) {
 		if(this.speed > 0) {
@@ -11787,21 +11847,31 @@ iron_object_ObjectAnimation.prototype = $extend(iron_object_Animation.prototype,
 			var ti = this.frameIndex;
 			var t11 = track.frames[ti] * this.frameTime;
 			var t2 = track.frames[ti + sign] * this.frameTime;
-			var interpolate = $bind(this,this.interpolateLinear);
+			var v1 = track.values[ti];
+			var v2 = track.values[ti + sign];
+			var v = 0.0;
 			var _g2 = track.curve;
 			switch(_g2) {
 			case "bezier":
-				interpolate = $bind(this,this.interpolateBezier);
+				var c1 = track.frames_control_plus[ti] * this.frameTime;
+				var c2 = track.frames_control_minus[ti + sign] * this.frameTime;
+				var p1 = track.values_control_plus[ti];
+				var p2 = track.values_control_minus[ti + sign];
+				if(this.frameIndex != this.bezierFrameIndex) {
+					this.bezierFrameIndex = this.frameIndex;
+					this.s0 = (t1 - t11) / (t2 - t11);
+				}
+				var a = (t2 - 3 * c2 + 3 * c1 - t11) * (this.s0 * this.s0 * this.s0) + 3 * (c2 - 2 * c1 + t11) * (this.s0 * this.s0) + 3 * (c1 - t11) * this.s0 + t11 - t1;
+				var b = 3 * (t2 - 3 * c2 + 3 * c1 - t11) * (this.s0 * this.s0) + 6 * (c2 - 2 * c1 + t11) * this.s0 + 3 * (c1 - t11);
+				var s = this.s0 - a / b;
+				this.s0 = s;
+				v = (1 - s) * (1 - s) * (1 - s) * v1 + 3 * s * (1 - s) * (1 - s) * p1 + 3 * (s * s) * (1 - s) * p2 + s * s * s * v2;
 				break;
 			case "linear":
-				interpolate = $bind(this,this.interpolateLinear);
+				var s1 = (t1 - t11) / (t2 - t11);
+				v = (1.0 - s1) * v1 + s1 * v2;
 				break;
 			}
-			var s = interpolate(t1,t11,t2);
-			var invs = 1.0 - s;
-			var v1 = track.values[ti];
-			var v2 = track.values[ti + sign];
-			var v = v1 * invs + v2 * s;
 			var _g3 = track.target;
 			switch(_g3) {
 			case "dxloc":
@@ -16892,92 +16962,74 @@ kha_Shaders.init = function() {
 	var _g24 = 0;
 	while(_g24 < 1) {
 		var i24 = _g24++;
-		var data24 = Reflect.field(kha_Shaders,"armdefault_mesh_vertData" + i24);
+		var data24 = Reflect.field(kha_Shaders,"painter_colored_fragData" + i24);
 		var bytes24 = haxe_Unserializer.run(data24);
 		blobs24.push(kha_internal_BytesBlob.fromBytes(bytes24));
 	}
-	kha_Shaders.armdefault_mesh_vert = new kha_graphics4_VertexShader(blobs24,["armdefault_mesh.vert.glsl"]);
+	kha_Shaders.painter_colored_frag = new kha_graphics4_FragmentShader(blobs24,["painter-colored.frag.glsl"]);
 	var blobs25 = [];
 	var _g25 = 0;
 	while(_g25 < 1) {
 		var i25 = _g25++;
-		var data25 = Reflect.field(kha_Shaders,"armdefault_shadowmap_vertData" + i25);
+		var data25 = Reflect.field(kha_Shaders,"painter_image_fragData" + i25);
 		var bytes25 = haxe_Unserializer.run(data25);
 		blobs25.push(kha_internal_BytesBlob.fromBytes(bytes25));
 	}
-	kha_Shaders.armdefault_shadowmap_vert = new kha_graphics4_VertexShader(blobs25,["armdefault_shadowmap.vert.glsl"]);
+	kha_Shaders.painter_image_frag = new kha_graphics4_FragmentShader(blobs25,["painter-image.frag.glsl"]);
 	var blobs26 = [];
 	var _g26 = 0;
 	while(_g26 < 1) {
 		var i26 = _g26++;
-		var data26 = Reflect.field(kha_Shaders,"painter_colored_fragData" + i26);
+		var data26 = Reflect.field(kha_Shaders,"painter_colored_vertData" + i26);
 		var bytes26 = haxe_Unserializer.run(data26);
 		blobs26.push(kha_internal_BytesBlob.fromBytes(bytes26));
 	}
-	kha_Shaders.painter_colored_frag = new kha_graphics4_FragmentShader(blobs26,["painter-colored.frag.glsl"]);
+	kha_Shaders.painter_colored_vert = new kha_graphics4_VertexShader(blobs26,["painter-colored.vert.glsl"]);
 	var blobs27 = [];
 	var _g27 = 0;
 	while(_g27 < 1) {
 		var i27 = _g27++;
-		var data27 = Reflect.field(kha_Shaders,"painter_colored_vertData" + i27);
+		var data27 = Reflect.field(kha_Shaders,"painter_image_vertData" + i27);
 		var bytes27 = haxe_Unserializer.run(data27);
 		blobs27.push(kha_internal_BytesBlob.fromBytes(bytes27));
 	}
-	kha_Shaders.painter_colored_vert = new kha_graphics4_VertexShader(blobs27,["painter-colored.vert.glsl"]);
+	kha_Shaders.painter_image_vert = new kha_graphics4_VertexShader(blobs27,["painter-image.vert.glsl"]);
 	var blobs28 = [];
 	var _g28 = 0;
 	while(_g28 < 1) {
 		var i28 = _g28++;
-		var data28 = Reflect.field(kha_Shaders,"painter_image_fragData" + i28);
+		var data28 = Reflect.field(kha_Shaders,"painter_text_fragData" + i28);
 		var bytes28 = haxe_Unserializer.run(data28);
 		blobs28.push(kha_internal_BytesBlob.fromBytes(bytes28));
 	}
-	kha_Shaders.painter_image_frag = new kha_graphics4_FragmentShader(blobs28,["painter-image.frag.glsl"]);
+	kha_Shaders.painter_text_frag = new kha_graphics4_FragmentShader(blobs28,["painter-text.frag.glsl"]);
 	var blobs29 = [];
 	var _g29 = 0;
 	while(_g29 < 1) {
 		var i29 = _g29++;
-		var data29 = Reflect.field(kha_Shaders,"painter_image_vertData" + i29);
+		var data29 = Reflect.field(kha_Shaders,"painter_text_vertData" + i29);
 		var bytes29 = haxe_Unserializer.run(data29);
 		blobs29.push(kha_internal_BytesBlob.fromBytes(bytes29));
 	}
-	kha_Shaders.painter_image_vert = new kha_graphics4_VertexShader(blobs29,["painter-image.vert.glsl"]);
+	kha_Shaders.painter_text_vert = new kha_graphics4_VertexShader(blobs29,["painter-text.vert.glsl"]);
 	var blobs30 = [];
 	var _g30 = 0;
 	while(_g30 < 1) {
 		var i30 = _g30++;
-		var data30 = Reflect.field(kha_Shaders,"painter_text_fragData" + i30);
+		var data30 = Reflect.field(kha_Shaders,"painter_video_fragData" + i30);
 		var bytes30 = haxe_Unserializer.run(data30);
 		blobs30.push(kha_internal_BytesBlob.fromBytes(bytes30));
 	}
-	kha_Shaders.painter_text_frag = new kha_graphics4_FragmentShader(blobs30,["painter-text.frag.glsl"]);
+	kha_Shaders.painter_video_frag = new kha_graphics4_FragmentShader(blobs30,["painter-video.frag.glsl"]);
 	var blobs31 = [];
 	var _g31 = 0;
 	while(_g31 < 1) {
 		var i31 = _g31++;
-		var data31 = Reflect.field(kha_Shaders,"painter_text_vertData" + i31);
+		var data31 = Reflect.field(kha_Shaders,"painter_video_vertData" + i31);
 		var bytes31 = haxe_Unserializer.run(data31);
 		blobs31.push(kha_internal_BytesBlob.fromBytes(bytes31));
 	}
-	kha_Shaders.painter_text_vert = new kha_graphics4_VertexShader(blobs31,["painter-text.vert.glsl"]);
-	var blobs32 = [];
-	var _g32 = 0;
-	while(_g32 < 1) {
-		var i32 = _g32++;
-		var data32 = Reflect.field(kha_Shaders,"painter_video_fragData" + i32);
-		var bytes32 = haxe_Unserializer.run(data32);
-		blobs32.push(kha_internal_BytesBlob.fromBytes(bytes32));
-	}
-	kha_Shaders.painter_video_frag = new kha_graphics4_FragmentShader(blobs32,["painter-video.frag.glsl"]);
-	var blobs33 = [];
-	var _g33 = 0;
-	while(_g33 < 1) {
-		var i33 = _g33++;
-		var data33 = Reflect.field(kha_Shaders,"painter_video_vertData" + i33);
-		var bytes33 = haxe_Unserializer.run(data33);
-		blobs33.push(kha_internal_BytesBlob.fromBytes(bytes33));
-	}
-	kha_Shaders.painter_video_vert = new kha_graphics4_VertexShader(blobs33,["painter-video.vert.glsl"]);
+	kha_Shaders.painter_video_vert = new kha_graphics4_VertexShader(blobs31,["painter-video.vert.glsl"]);
 };
 var kha_Sound = $hxClasses["kha.Sound"] = function() {
 };
@@ -33095,11 +33147,9 @@ kha_Shaders.Material_003_mesh_vertData0 = "s408:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9B
 kha_Shaders.Material_003_shadowmap_fragData0 = "s174:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp2b2lkIG1haW4oKQp7Cn0KCg";
 kha_Shaders.Material_003_shadowmap_vertData0 = "s303:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgTFdWUDsKCmluIHZlYzMgcG9zOwoKdm9pZCBtYWluKCkKewogICAgdmVjNCBzcG9zID0gdmVjNChwb3MsIDEuMCk7CiAgICBnbF9Qb3NpdGlvbiA9IExXVlAgKiBzcG9zOwp9Cgo";
 kha_Shaders.armdefault_mesh_fragData0 = "s1426:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgppbiB2ZWMzIHdub3JtYWw7Cm91dCB2ZWM0IGZyYWdDb2xvclsyXTsKCnZlYzIgb2N0YWhlZHJvbldyYXAodmVjMiB2KQp7CiAgICByZXR1cm4gKHZlYzIoMS4wKSAtIGFicyh2Lnl4KSkgKiB2ZWMyKCh2LnggPj0gMC4wKSA:IDEuMCA6ICgtMS4wKSwgKHYueSA%PSAwLjApID8gMS4wIDogKC0xLjApKTsKfQoKZmxvYXQgcGFja0Zsb2F0KGZsb2F0IGYxLCBmbG9hdCBmMikKewogICAgcmV0dXJuIGZsb29yKGYxICogMTAwLjApICsgbWluKGYyLCAwLjk5MDAwMDAwOTUzNjc0MzE2NDA2MjUpOwp9CgpmbG9hdCBwYWNrRmxvYXQyKGZsb2F0IGYxLCBmbG9hdCBmMikKewogICAgcmV0dXJuIGZsb29yKGYxICogMjU1LjApICsgbWluKGYyLCAwLjk5MDAwMDAwOTUzNjc0MzE2NDA2MjUpOwp9Cgp2b2lkIG1haW4oKQp7CiAgICB2ZWMzIG4gPSBub3JtYWxpemUod25vcm1hbCk7CiAgICB2ZWMzIGJhc2Vjb2wgPSB2ZWMzKDAuODAwMDAwMDExOTIwOTI4OTU1MDc4MTI1KTsKICAgIGZsb2F0IHJvdWdobmVzcyA9IDAuMDsKICAgIGZsb2F0IG1ldGFsbGljID0gMC4wOwogICAgZmxvYXQgb2NjbHVzaW9uID0gMS4wOwogICAgZmxvYXQgc3BlY3VsYXIgPSAwLjA7CiAgICBuIC89IHZlYzMoKGFicyhuLngpICsgYWJzKG4ueSkpICsgYWJzKG4ueikpOwogICAgdmVjMiBfOTE7CiAgICBpZiAobi56ID49IDAuMCkKICAgIHsKICAgICAgICBfOTEgPSBuLnh5OwogICAgfQogICAgZWxzZQogICAgewogICAgICAgIF85MSA9IG9jdGFoZWRyb25XcmFwKG4ueHkpOwogICAgfQogICAgbiA9IHZlYzMoXzkxLngsIF85MS55LCBuLnopOwogICAgZnJhZ0NvbG9yWzBdID0gdmVjNChuLnh5LCBwYWNrRmxvYXQobWV0YWxsaWMsIHJvdWdobmVzcyksIDEuMCAtIGdsX0ZyYWdDb29yZC56KTsKICAgIGZyYWdDb2xvclsxXSA9IHZlYzQoYmFzZWNvbCwgcGFja0Zsb2F0MihvY2NsdXNpb24sIHNwZWN1bGFyKSk7Cn0KCg";
-kha_Shaders.armdefault_mesh_vertData0 = "s408:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDMgTjsKdW5pZm9ybSBtYXQ0IFdWUDsKCmluIHZlYzMgcG9zOwpvdXQgdmVjMyB3bm9ybWFsOwppbiB2ZWMzIG5vcjsKCnZvaWQgbWFpbigpCnsKICAgIHZlYzQgc3BvcyA9IHZlYzQocG9zLCAxLjApOwogICAgd25vcm1hbCA9IG5vcm1hbGl6ZShOICogbm9yKTsKICAgIGdsX1Bvc2l0aW9uID0gV1ZQICogc3BvczsKfQoK";
-kha_Shaders.armdefault_shadowmap_vertData0 = "s303:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgTFdWUDsKCmluIHZlYzMgcG9zOwoKdm9pZCBtYWluKCkKewogICAgdmVjNCBzcG9zID0gdmVjNChwb3MsIDEuMCk7CiAgICBnbF9Qb3NpdGlvbiA9IExXVlAgKiBzcG9zOwp9Cgo";
 kha_Shaders.painter_colored_fragData0 = "s274:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgpvdXQgdmVjNCBGcmFnQ29sb3I7CmluIHZlYzQgZnJhZ21lbnRDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIEZyYWdDb2xvciA9IGZyYWdtZW50Q29sb3I7Cn0KCg";
-kha_Shaders.painter_colored_vertData0 = "s439:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWM0IGZyYWdtZW50Q29sb3I7CmluIHZlYzQgdmVydGV4Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBnbF9Qb3NpdGlvbiA9IHByb2plY3Rpb25NYXRyaXggKiB2ZWM0KHZlcnRleFBvc2l0aW9uLCAxLjApOwogICAgZnJhZ21lbnRDb2xvciA9IHZlcnRleENvbG9yOwp9Cgo";
 kha_Shaders.painter_image_fragData0 = "s506:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIHNhbXBsZXIyRCB0ZXg7CgppbiB2ZWMyIHRleENvb3JkOwppbiB2ZWM0IGNvbG9yOwpvdXQgdmVjNCBGcmFnQ29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICB2ZWM0IHRleGNvbG9yID0gdGV4dHVyZSh0ZXgsIHRleENvb3JkKSAqIGNvbG9yOwogICAgdmVjMyBfMzIgPSB0ZXhjb2xvci54eXogKiBjb2xvci53OwogICAgdGV4Y29sb3IgPSB2ZWM0KF8zMi54LCBfMzIueSwgXzMyLnosIHRleGNvbG9yLncpOwogICAgRnJhZ0NvbG9yID0gdGV4Y29sb3I7Cn0KCg";
+kha_Shaders.painter_colored_vertData0 = "s439:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWM0IGZyYWdtZW50Q29sb3I7CmluIHZlYzQgdmVydGV4Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBnbF9Qb3NpdGlvbiA9IHByb2plY3Rpb25NYXRyaXggKiB2ZWM0KHZlcnRleFBvc2l0aW9uLCAxLjApOwogICAgZnJhZ21lbnRDb2xvciA9IHZlcnRleENvbG9yOwp9Cgo";
 kha_Shaders.painter_image_vertData0 = "s508:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWMyIHRleENvb3JkOwppbiB2ZWMyIHRleFBvc2l0aW9uOwpvdXQgdmVjNCBjb2xvcjsKaW4gdmVjNCB2ZXJ0ZXhDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIGdsX1Bvc2l0aW9uID0gcHJvamVjdGlvbk1hdHJpeCAqIHZlYzQodmVydGV4UG9zaXRpb24sIDEuMCk7CiAgICB0ZXhDb29yZCA9IHRleFBvc2l0aW9uOwogICAgY29sb3IgPSB2ZXJ0ZXhDb2xvcjsKfQoK";
 kha_Shaders.painter_text_fragData0 = "s402:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIHNhbXBsZXIyRCB0ZXg7CgpvdXQgdmVjNCBGcmFnQ29sb3I7CmluIHZlYzQgZnJhZ21lbnRDb2xvcjsKaW4gdmVjMiB0ZXhDb29yZDsKCnZvaWQgbWFpbigpCnsKICAgIEZyYWdDb2xvciA9IHZlYzQoZnJhZ21lbnRDb2xvci54eXosIHRleHR1cmUodGV4LCB0ZXhDb29yZCkueCAqIGZyYWdtZW50Q29sb3Iudyk7Cn0KCg";
 kha_Shaders.painter_text_vertData0 = "s530:I3ZlcnNpb24gMzMwCiNpZmRlZiBHTF9BUkJfc2hhZGluZ19sYW5ndWFnZV80MjBwYWNrCiNleHRlbnNpb24gR0xfQVJCX3NoYWRpbmdfbGFuZ3VhZ2VfNDIwcGFjayA6IHJlcXVpcmUKI2VuZGlmCgp1bmlmb3JtIG1hdDQgcHJvamVjdGlvbk1hdHJpeDsKCmluIHZlYzMgdmVydGV4UG9zaXRpb247Cm91dCB2ZWMyIHRleENvb3JkOwppbiB2ZWMyIHRleFBvc2l0aW9uOwpvdXQgdmVjNCBmcmFnbWVudENvbG9yOwppbiB2ZWM0IHZlcnRleENvbG9yOwoKdm9pZCBtYWluKCkKewogICAgZ2xfUG9zaXRpb24gPSBwcm9qZWN0aW9uTWF0cml4ICogdmVjNCh2ZXJ0ZXhQb3NpdGlvbiwgMS4wKTsKICAgIHRleENvb3JkID0gdGV4UG9zaXRpb247CiAgICBmcmFnbWVudENvbG9yID0gdmVydGV4Q29sb3I7Cn0KCg";

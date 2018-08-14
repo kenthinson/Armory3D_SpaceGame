@@ -51,15 +51,15 @@
 -D kha
 -D kha_version=1611
 -js krom/krom.js.temp
-arm.EnemyController
---macro keep('arm.EnemyController')
-armory.trait.physics.bullet.RigidBody
---macro keep('armory.trait.physics.bullet.RigidBody')
-armory.trait.physics.bullet.PhysicsWorld
---macro keep('armory.trait.physics.bullet.PhysicsWorld')
 arm.BulletController
 --macro keep('arm.BulletController')
 arm.PlayerController
 --macro keep('arm.PlayerController')
+armory.trait.physics.bullet.RigidBody
+--macro keep('armory.trait.physics.bullet.RigidBody')
+arm.EnemyController
+--macro keep('arm.EnemyController')
+armory.trait.physics.bullet.PhysicsWorld
+--macro keep('armory.trait.physics.bullet.PhysicsWorld')
 -debug
 -main Main
