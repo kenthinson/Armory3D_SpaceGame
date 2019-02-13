@@ -33,6 +33,10 @@ class BulletController extends iron.Trait {
 						rigidBody.object.getTrait(EnemyController).damage(1);
 						object.remove();
 					}
+					if(rigidBody.object.name == "EnemyBullet"){
+						rigidBody.object.getTrait(EnemyBulletController).damage(1);
+						object.remove();
+					}
 				}
 			}
 
